@@ -1,17 +1,20 @@
 struct TrainCar {
     id: u32,
     contents: String,
-    is_locked: bool,
 }
 
-
-
-
 fn main() {
-let mut car_1 = TrainCar {
-        id: 101,
-        contents: String::from("Civilians"), // Bullet Train consequences...
-        is_locked: true,
+    let car = TrainCar {
+        id: 7,
+        contents: String::from("Diesel"),
     };
 
-    println!("Car {} contains {}.", car_1.id, car_1.contents);}
+    // We pass a reference (&) so we don't 'lose' the car
+    inspect_car(&car);
+
+    println!("Car {} is still in the station.", car.id);
+}
+
+fn inspect_car(target: &TrainCar) {
+    println!("Inspecting car... it contains: {}", target.contents);
+}
