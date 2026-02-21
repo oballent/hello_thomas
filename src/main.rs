@@ -4,22 +4,28 @@ struct TrainCar {
 }
 
 fn main() {
-    let car = TrainCar {
+    // 1. The car itself must be 'mut' so we can change it later
+    let mut car = TrainCar {
         id: 7,
-        contents: String::from("Diesel"), // Change this to "Thomas" to see the difference
+        contents: String::from("Diesel"),
     };
 
-    // We pass a reference to our "Security Check"
-    let safety_status = check_security(&car);
-    
-    println!("Car {}: {}", car.id, safety_status);
+    println!("Current Car: {} contains {}", car.id, car.contents);
+
+    // 2. We check the car (Reading)
+    if car.contents == "Diesel" {
+        println!("Warning: Troublemaker detected. Initiating attitude adjustment...");
+        
+        // 3. We fix the car (Writing/Mutating)
+        // We pass it as a mutable reference using '&mut'
+        fix_engine(&mut car);
+    }
+
+    println!("After adjustment: Car {} now contains {}", car.id, car.contents);
 }
 
-fn check_security(car: &TrainCar) -> String {
-    // We 'Read' the contents without taking ownership
-    if car.contents == "Diesel" {
-        String::from("Warning: Troublemaker detected on the rails.")
-    } else {
-        String::from("All clear. A very useful engine indeed.")
-    }
+// This function takes a MUTABLE reference to a TrainCar
+fn fix_engine(car: &mut TrainCar) {
+    // We replace the 'Diesel' clay with 'Thomas' clay
+    car.contents = String::from("Thomas");
 }
