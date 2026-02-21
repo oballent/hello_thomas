@@ -6,15 +6,20 @@ struct TrainCar {
 fn main() {
     let car = TrainCar {
         id: 7,
-        contents: String::from("Diesel"),
+        contents: String::from("Diesel"), // Change this to "Thomas" to see the difference
     };
 
-    // We pass a reference (&) so we don't 'lose' the car
-    inspect_car(&car);
-
-    println!("Car {} is still in the station.", car.id);
+    // We pass a reference to our "Security Check"
+    let safety_status = check_security(&car);
+    
+    println!("Car {}: {}", car.id, safety_status);
 }
 
-fn inspect_car(target: &TrainCar) {
-    println!("Inspecting car... it contains: {}", target.contents);
+fn check_security(car: &TrainCar) -> String {
+    // We 'Read' the contents without taking ownership
+    if car.contents == "Diesel" {
+        String::from("Warning: Troublemaker detected on the rails.")
+    } else {
+        String::from("All clear. A very useful engine indeed.")
+    }
 }
