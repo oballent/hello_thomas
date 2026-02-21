@@ -22,6 +22,7 @@ fn main() {
     }
 
     println!("After adjustment: Car {} now contains {}", car.id, car.contents);
+    println!("{} says, 'Don't nick.'", car.contents);
 }
 
 // This function takes a MUTABLE reference to a TrainCar
