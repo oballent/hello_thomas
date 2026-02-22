@@ -4,6 +4,8 @@
 }
 */
 
+use std::f32::consts::E;
+#[derive(Copy, Clone)] // This is the "Magic Stamp"
 enum EngineType {
     Diesel,
     Thomas,
@@ -13,9 +15,15 @@ enum EngineType {
 fn main() {
 
 
-let beckett = EngineType::Diesel;
-let description = describe_personality(beckett);
-println!("Beckett's personality: {}", description);
+//let beckett = &mut EngineType::Diesel;
+let mut beckett: EngineType = EngineType::Diesel;
+
+println!("Beckett's personality: {}", describe_personality(beckett));
+
+rehabilitate(&mut beckett);
+
+println!("Beckett's personality after rehabilitation: {}", describe_personality(beckett));
+
 
 /*
     // 1. The car itself must be 'mut' so we can change it later
@@ -55,4 +63,11 @@ fn describe_personality(engine: EngineType) -> String{
         EngineType::Thomas => String::from("Thomas is a friendly and helpful engine, always ready to lend a hand and make friends."),
         EngineType::Percy => String::from("Percy is a brave and intuitive little engine that doesn't always think things through, but always tries his best."),
     }
+}
+
+fn rehabilitate(engine: &mut EngineType) {
+    println!("Rehabilitating the engine's personality...");
+    // This function would contain logic to rehabilitate the engine's personality
+    // For example, if it's a Diesel, we could change it to a Thomas
+    *engine = EngineType::Thomas;
 }
