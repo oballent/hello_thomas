@@ -1,4 +1,16 @@
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
+struct TrainCar {
+    id: u32,
+    engine: EngineType,
+}
+
+impl TrainCar {
+    fn rehabilitate(&mut self) {
+        println!("Rehabilitating the train car's engine...");
+        self.engine = EngineType::Thomas;
+    }
+}
+
 enum EngineType {
     Diesel,
     Thomas,
@@ -7,6 +19,18 @@ enum EngineType {
 
 fn main() {
 
+let mut car_7 = TrainCar{
+    id: 7,
+    engine: EngineType::Diesel,
+};
+
+println!("Car 7's engine personality: {}", describe_personality(&car_7.engine));
+
+car_7.rehabilitate();
+
+println!("Car 7's engine personality after rehabilitation: {}", describe_personality(&car_7.engine));
+
+/*
 
 //let beckett = &mut EngineType::Diesel;
 let mut beckett: EngineType = EngineType::Diesel;
@@ -18,7 +42,7 @@ rehabilitate(&mut beckett);
 
 println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett));
 
-
+*/
 }
 
 fn describe_personality(engine: &EngineType) -> String{
