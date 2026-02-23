@@ -1,11 +1,4 @@
-/*struct TrainCar {
-    id: u32,
-    contents: String,
-}
-*/
-
-use std::f32::consts::E;
-#[derive(Copy, Clone)] // This is the "Magic Stamp"
+// This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 enum EngineType {
     Diesel,
     Thomas,
@@ -18,46 +11,17 @@ fn main() {
 //let beckett = &mut EngineType::Diesel;
 let mut beckett: EngineType = EngineType::Diesel;
 
-println!("Beckett's personality: {}", describe_personality(beckett));
+//What does it really mean to have keep ownership in main? It means that we can create a mutable variable that holds the engine type, and we can pass a mutable reference to it when we want to rehabilitate its personality. This way, we can modify the engine's personality without losing ownership of the variable in main. But we can also pass a reference to the variable when we want to describe its personality, without needing to modify it. This allows us to keep ownership of the variable in main while still being able to interact with it in different ways.
+println!("Beckett's personality: {}", describe_personality(&beckett));
 
 rehabilitate(&mut beckett);
 
-println!("Beckett's personality after rehabilitation: {}", describe_personality(beckett));
+println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett));
 
 
-/*
-    // 1. The car itself must be 'mut' so we can change it later
-    let mut car = TrainCar {
-        id: 7,
-        contents: String::from("Diesel"),
-    };
-
-    println!("Current Car: {} contains {}", car.id, car.contents);
-
-    // 2. We check the car (Reading)
-    if car.contents == "Diesel" {
-        println!("Warning: Troublemaker detected. Initiating attitude adjustment...");
-        
-        // 3. We fix the car (Writing/Mutating)
-        // We pass it as a mutable reference using '&mut'
-        fix_engine(&mut car);
-    }
-
-    println!("After adjustment: Car {} now contains {}", car.id, car.contents);
-    println!("{} says, 'Don't nick.'", car.contents);
-    */
 }
 
-
-// This function takes a MUTABLE reference to a TrainCar
-/*
-fn fix_engine(car: &mut TrainCar) {
-    // We replace the 'Diesel' clay with 'Thomas' clay
-    car.contents = String::from("Thomas");
-}
-*/
-
-fn describe_personality(engine: EngineType) -> String{
+fn describe_personality(engine: &EngineType) -> String{
     match engine {
         EngineType::Diesel => String::from("Diesel is a troublemaker, always causing mischief and chaos on the tracks."),
         EngineType::Thomas => String::from("Thomas is a friendly and helpful engine, always ready to lend a hand and make friends."),
