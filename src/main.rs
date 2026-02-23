@@ -18,7 +18,7 @@ enum EngineType {
 }
 
 fn main() {
-
+/*
 let mut car_7 = TrainCar{
     id: 7,
     engine: EngineType::Diesel,
@@ -28,21 +28,23 @@ println!("Car 7's engine personality: {}", describe_personality(&car_7.engine));
 
 car_7.rehabilitate();
 
-println!("Car 7's engine personality after rehabilitation: {}", describe_personality(&car_7.engine));
+println!("Car 7's engine personality after rehabilitation: {}", describe_personality(&car_7.engine));*/
 
-/*
+
 
 //let beckett = &mut EngineType::Diesel;
-let mut beckett: EngineType = EngineType::Diesel;
+let mut beckett: TrainCar = TrainCar{
+    id: 7,
+    engine: EngineType::Diesel,
+};
 
 //What does it really mean to have keep ownership in main? It means that we can create a mutable variable that holds the engine type, and we can pass a mutable reference to it when we want to rehabilitate its personality. This way, we can modify the engine's personality without losing ownership of the variable in main. But we can also pass a reference to the variable when we want to describe its personality, without needing to modify it. This allows us to keep ownership of the variable in main while still being able to interact with it in different ways.
-println!("Beckett's personality: {}", describe_personality(&beckett));
+println!("Beckett's personality: {}", describe_personality(&beckett.engine));
 
-rehabilitate(&mut beckett);
+beckett.rehabilitate();
+println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett.engine));
 
-println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett));
 
-*/
 }
 
 fn describe_personality(engine: &EngineType) -> String{
