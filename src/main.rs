@@ -2,12 +2,19 @@
 struct TrainCar {
     id: u32,
     engine: EngineType,
+    passenger: Option<String>,
 }
 
 impl TrainCar {
     fn rehabilitate(&mut self) {
         println!("Rehabilitating the train car's engine...");
         self.engine = EngineType::Thomas;
+    }
+    fn check_passenger(&self) {
+        match &self.passenger {
+            Some(name) => println!("{} is aboard!", name),
+            None => println!("Ain't nobody on this train car!"),
+        }
     }
 }
 
@@ -36,6 +43,13 @@ println!("Car 7's engine personality after rehabilitation: {}", describe_persona
 let mut beckett: TrainCar = TrainCar{
     id: 7,
     engine: EngineType::Diesel,
+    passenger: Some(String::from("Lemon")),
+};
+
+let mut diesel_himself = TrainCar{
+    id: 8,
+    engine: EngineType::Diesel,
+    passenger: None,
 };
 
 //What does it really mean to have keep ownership in main? It means that we can create a mutable variable that holds the engine type, and we can pass a mutable reference to it when we want to rehabilitate its personality. This way, we can modify the engine's personality without losing ownership of the variable in main. But we can also pass a reference to the variable when we want to describe its personality, without needing to modify it. This allows us to keep ownership of the variable in main while still being able to interact with it in different ways.
@@ -44,6 +58,9 @@ println!("Beckett's personality: {}", describe_personality(&beckett.engine));
 beckett.rehabilitate();
 println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett.engine));
 
+
+beckett.check_passenger();
+diesel_himself.check_passenger();
 
 }
 
