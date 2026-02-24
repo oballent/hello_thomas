@@ -1,3 +1,5 @@
+use std::clone;
+
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 struct TrainCar {
     id: u32,
@@ -5,26 +7,44 @@ struct TrainCar {
     passenger: Option<String>,
 }
 
-impl TrainCar {
-    fn rehabilitate(&mut self) {
-        println!("Rehabilitating the train car's engine...");
-        self.engine = EngineType::Thomas;
-    }
-    fn check_passenger(&self) {
-        match &self.passenger {
-            Some(name) => println!("{} is aboard!", name),
-            None => println!("Ain't nobody on this train car!"),
-        }
-    }
-}
 
+//#[derive(Clone, Copy)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
 enum EngineType {
     Diesel,
     Thomas,
     Percy,
 }
 
+
+#[derive(Debug)]
+enum TrainError {
+    EngineOverheat,
+    DieselInTheStation,
+}
+
+impl TrainCar {
+    fn rehabilitate(&mut self) {
+        println!("Rehabilitating the train car's engine...");
+        self.engine = EngineType::Thomas;
+    }
+
+    fn check_passenger(&self) {
+        match &self.passenger {
+            Some(name) => println!("{} is aboard!", name),
+            None => println!("Ain't nobody on this train car!"),
+        }
+    }
+
+    fn start_engine(&self) -> Result<String, TrainError> {
+        match self.engine {
+            EngineType::Diesel => Err(TrainError::DieselInTheStation),
+            _ => Ok(String::from("The engine starts successfully!")),
+        }
+    }
+}
+
 fn main() {
+
 /*
 let mut car_7 = TrainCar{
     id: 7,
@@ -38,31 +58,44 @@ car_7.rehabilitate();
 println!("Car 7's engine personality after rehabilitation: {}", describe_personality(&car_7.engine));*/
 
 
-
+/*
 //let beckett = &mut EngineType::Diesel;
 let mut beckett: TrainCar = TrainCar{
     id: 7,
     engine: EngineType::Diesel,
     passenger: Some(String::from("Lemon")),
 };
+*/
 
+/*
 let mut diesel_himself = TrainCar{
     id: 8,
     engine: EngineType::Diesel,
     passenger: None,
 };
+*/
 
 //What does it really mean to have keep ownership in main? It means that we can create a mutable variable that holds the engine type, and we can pass a mutable reference to it when we want to rehabilitate its personality. This way, we can modify the engine's personality without losing ownership of the variable in main. But we can also pass a reference to the variable when we want to describe its personality, without needing to modify it. This allows us to keep ownership of the variable in main while still being able to interact with it in different ways.
-println!("Beckett's personality: {}", describe_personality(&beckett.engine));
+//println!("Beckett's personality: {}", describe_personality(&beckett.engine));
 
-beckett.rehabilitate();
-println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett.engine));
+//beckett.rehabilitate();
+//println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett.engine));
 
 
-beckett.check_passenger();
-diesel_himself.check_passenger();
+//beckett.check_passenger();
+//diesel_himself.check_passenger();
+
+
+let car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None };
+
+match car.start_engine() {
+    Ok(message) => println!("{}", message),
+    Err(error) => println!("Error starting the engine: {:?}", error),
+}
 
 }
+
+
 
 fn describe_personality(engine: &EngineType) -> String{
     match engine {
@@ -72,9 +105,11 @@ fn describe_personality(engine: &EngineType) -> String{
     }
 }
 
+/*
 fn rehabilitate(engine: &mut EngineType) {
     println!("Rehabilitating the engine's personality...");
     // This function would contain logic to rehabilitate the engine's personality
     // For example, if it's a Diesel, we could change it to a Thomas
     *engine = EngineType::Thomas;
-}
+} 
+*/
