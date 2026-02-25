@@ -43,9 +43,9 @@ impl TrainCar {
     }
 
     fn prepare_for_departure(&self) -> Result<String, TrainError> {
-        //how come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
+        //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
          let engine_status = self.start_engine()?;
-         // where does OK(String::from("The train is ready for departure!")) come from? Is it just a way to return a successful result from the function, indicating that the train is ready for departure? Yes, that's correct! The Ok(String::from("The train is ready for departure!")) is a way to return a successful result from the prepare_for_departure() function. It indicates that the engine started successfully and the train is ready for departure. The Ok variant of the Result type is used to represent a successful outcome, while the Err variant is used to represent an error. In this case, if the engine starts successfully, we return an Ok value with a message indicating that the train is ready for departure. If there was an error starting the engine (like if it's a Diesel), we would return an Err value with the appropriate TrainError.
+         // Where does OK(String::from("The train is ready for departure!")) come from? Is it just a way to return a successful result from the function, indicating that the train is ready for departure? Yes, that's correct! The Ok(String::from("The train is ready for departure!")) is a way to return a successful result from the prepare_for_departure() function. It indicates that the engine started successfully and the train is ready for departure. The Ok variant of the Result type is used to represent a successful outcome, while the Err variant is used to represent an error. In this case, if the engine starts successfully, we return an Ok value with a message indicating that the train is ready for departure. If there was an error starting the engine (like if it's a Diesel), we would return an Err value with the appropriate TrainError.
          Ok(format!("Departure Status: {}", engine_status))
     }
 }
@@ -93,13 +93,24 @@ let mut diesel_himself = TrainCar{
 //diesel_himself.check_passenger();
 
 
-let car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None };
+let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None };
 
 match car.start_engine() {
     Ok(message) => println!("{}", message),
     Err(error) => println!("Error starting the engine: {:?}", error),
 }
 
+car.prepare_for_departure();
+car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
+
+car.rehabilitate();
+
+match car.start_engine() {
+    Ok(message) => println!("{}", message),
+    Err(error) => println!("Error starting the engine: {:?}", error),
+}
+
+car.prepare_for_departure();
 car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
 
 }
