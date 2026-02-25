@@ -16,6 +16,7 @@ enum EngineType {
     Percy,
 }
 
+#[derive(Debug)]
 enum FuelLevel {
     Full,
     Half,
@@ -114,8 +115,26 @@ let mut diesel_himself = TrainCar{
 //beckett.check_passenger();
 //diesel_himself.check_passenger();
 
+let mut the_line: Vec<TrainCar> = Vec::new();
 
-let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
+the_line.push(TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low });
+the_line.push(TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low });
+the_line.push(TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full });
+
+for car in &the_line {
+    //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
+    match car.prepare_for_departure() {
+        Ok(msg) => println!("Train Car {}: {}", car.id, msg),
+        Err(e) => {
+            println!("Train Car {}: Error preparing for departure: {:?}", car.id, e);
+            println!("--- Dispatcher: Skipping car {} and moving to next... ---", car.id);
+        }
+    }
+}
+
+/*
+
+//let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
 
 match car.start_engine() {
     Ok(message) => println!("{}", message),
@@ -171,6 +190,7 @@ match car.prepare_for_departure() {
     Err(error) => println!("Error preparing for departure: {:?}", error),
 }
 
+*/
 
 //car.prepare_for_departure();
 //car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
