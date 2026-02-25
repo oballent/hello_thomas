@@ -5,6 +5,7 @@ struct TrainCar {
     id: u32,
     engine: EngineType,
     passenger: Option<String>,
+    fuel_level: Fuel,
 }
 
 
@@ -13,6 +14,33 @@ enum EngineType {
     Diesel,
     Thomas,
     Percy,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct Fuel(f32);
+
+#[derive(Debug)]
+pub enum FuelError {
+    OutOfRange(f32),
+    NaN,
+}
+
+impl Fuel {
+    pub fn value(self) -> f32 { self.0 }
+}
+
+impl std::convert::TryFrom<f32> for Fuel {
+    type Error = FuelError;
+    fn try_from(v: f32) -> Result<Self, Self::Error> {
+        if v.is_nan() {
+            return Err(FuelError::NaN);
+        }
+        if (0.0..=100.0).contains(&v) {
+            Ok(Fuel(v))
+        } else {
+            Err(FuelError::OutOfRange(v))
+        }
+    }
 }
 
 
@@ -93,25 +121,43 @@ let mut diesel_himself = TrainCar{
 //diesel_himself.check_passenger();
 
 
-let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None };
+let fuel_level = match Fuel::try_from(101.0) {
+    Ok(f) => f,
+    Err(e) => {
+        eprintln!("Failed to create `Fuel` at {}:{} — error: {:?} (input: {})", file!(), line!(), e, 101.0);
+        std::process::exit(1);
+    }
+};
+
+let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None, fuel_level };
 
 match car.start_engine() {
     Ok(message) => println!("{}", message),
     Err(error) => println!("Error starting the engine: {:?}", error),
 }
 
-car.prepare_for_departure();
-car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
+let departure_status = car.prepare_for_departure();
+//car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
+
+match &departure_status {
+        Ok(msg) => println!("SUCCESS: {}", msg),
+        Err(e)  => println!("FAILURE: The train is stalled due to {:?}", e),
+    }
 
 car.rehabilitate();
 
-match car.start_engine() {
+match &car.start_engine() {
     Ok(message) => println!("{}", message),
     Err(error) => println!("Error starting the engine: {:?}", error),
 }
 
 car.prepare_for_departure();
-car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
+//car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
+
+match departure_status {
+        Ok(msg) => println!("SUCCESS: {}", msg),
+        Err(e)  => println!("FAILURE: The train is stalled due to {:?}", e),
+    }
 
 }
 
