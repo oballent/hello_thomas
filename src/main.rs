@@ -98,19 +98,37 @@ fn main() {
 
 
 //let mut the_line: Vec<TrainCar> = Vec::new();
-let mut the_line: Train = Train {
+/*let mut the_line: Train = Train {
+    id: 1,
+    cars: Vec::<TrainCar>::new(),
+};*/
+
+let thomas = TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low };
+let diesel = TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
+let percy = TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full };
+
+
+
+let the_line = Train {
+    id: 1,
+    cars: vec![thomas, diesel, percy],
+};
+
+
+
+/*
+let mut the_line = Train {
     id: 1,
     cars: Vec::new(),
 };
 
-let thomas_car = TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low };
-let diesel_car = TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
-let percy_car = TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full };
 
-the_line.cars.push(thomas_car);
-the_line.cars.push(diesel_car);
-the_line.cars.push(percy_car);
+the_line.cars.push(thomas);
+the_line.cars.push(diesel);
+the_line.cars.push(percy);
+*/
 
+/*
 for car in &the_line.cars {
     //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
     match car.prepare_for_departure() {
@@ -121,16 +139,41 @@ for car in &the_line.cars {
         }
     }
 }
-
+*/
 the_line.dispatch();
 
 
+
+
+
+/* */
 //let test_line = vec![&thomas_car, &diesel_car, &percy_car];
-let ok_engine_line: Vec<&TrainCar> = the_line.cars.iter() // 1. Start the conveyor belt
+let ok_engine_line: Vec<&TrainCar> = the_line.cars.iter()// // 1. Start the conveyor belt
+        .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
+        .collect(); // 3. Put the survivors into a new Box (Vec)
+
+    println!("The OK_Engine line has {} useful engines.", ok_engine_line.len());
+
+
+
+
+/*
+
+let thomas = TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low };
+let diesel = TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
+let percy = TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full };
+
+let the_line = vec![thomas, diesel, percy]; // Shorthand to create a Vec
+
+    // THE ITERATOR PIPELINE:
+    let ok_engine_line: Vec<&TrainCar> = the_line.iter() // 1. Start the conveyor belt
         .filter(|car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
         .collect(); // 3. Put the survivors into a new Box (Vec)
 
     println!("The OK_Engine line has {} useful engines.", ok_engine_line.len());
+
+*/
+
 
 
 
