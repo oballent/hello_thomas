@@ -8,6 +8,10 @@ struct TrainCar {
     fuel_level: FuelLevel,
 }
 
+struct Train{
+    id: u32,
+    cars: Vec<TrainCar>,
+}
 
 //#[derive(Clone, Copy)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
 enum EngineType {
@@ -73,55 +77,41 @@ impl TrainCar {
     }
 }
 
+
+impl Train {
+    fn dispatch(&self) {
+        println!("Train {} departing with {} cars!", self.id, self.cars.len());
+            for car in &self.cars {
+                match car.prepare_for_departure() {
+                    Ok(msg) => println!("Train Car {}: {}", car.id, msg),
+                    Err(e) => {
+                        println!("Train Car {}: Error preparing for departure: {:?}", car.id, e);
+                        println!("--- Dispatcher: Skipping car {} and moving to next... ---", car.id);
+                    }
+                }
+            }
+    }
+}
+
+
 fn main() {
 
-/*
-let mut car_7 = TrainCar{
-    id: 7,
-    engine: EngineType::Diesel,
+
+//let mut the_line: Vec<TrainCar> = Vec::new();
+let mut the_line: Train = Train {
+    id: 1,
+    cars: Vec::new(),
 };
 
-println!("Car 7's engine personality: {}", describe_personality(&car_7.engine));
+let thomas_car = TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low };
+let diesel_car = TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
+let percy_car = TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full };
 
-car_7.rehabilitate();
+the_line.cars.push(thomas_car);
+the_line.cars.push(diesel_car);
+the_line.cars.push(percy_car);
 
-println!("Car 7's engine personality after rehabilitation: {}", describe_personality(&car_7.engine));*/
-
-
-/*
-//let beckett = &mut EngineType::Diesel;
-let mut beckett: TrainCar = TrainCar{
-    id: 7,
-    engine: EngineType::Diesel,
-    passenger: Some(String::from("Lemon")),
-};
-*/
-
-/*
-let mut diesel_himself = TrainCar{
-    id: 8,
-    engine: EngineType::Diesel,
-    passenger: None,
-};
-*/
-
-//What does it really mean to have keep ownership in main? It means that we can create a mutable variable that holds the engine type, and we can pass a mutable reference to it when we want to rehabilitate its personality. This way, we can modify the engine's personality without losing ownership of the variable in main. But we can also pass a reference to the variable when we want to describe its personality, without needing to modify it. This allows us to keep ownership of the variable in main while still being able to interact with it in different ways.
-//println!("Beckett's personality: {}", describe_personality(&beckett.engine));
-
-//beckett.rehabilitate();
-//println!("Beckett's personality after rehabilitation: {}", describe_personality(&beckett.engine));
-
-
-//beckett.check_passenger();
-//diesel_himself.check_passenger();
-
-let mut the_line: Vec<TrainCar> = Vec::new();
-
-the_line.push(TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low });
-the_line.push(TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low });
-the_line.push(TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full });
-
-for car in &the_line {
+for car in &the_line.cars {
     //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
     match car.prepare_for_departure() {
         Ok(msg) => println!("Train Car {}: {}", car.id, msg),
@@ -131,6 +121,21 @@ for car in &the_line {
         }
     }
 }
+
+the_line.dispatch();
+
+
+//let test_line = vec![&thomas_car, &diesel_car, &percy_car];
+let ok_engine_line: Vec<&TrainCar> = the_line.cars.iter() // 1. Start the conveyor belt
+        .filter(|car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
+        .collect(); // 3. Put the survivors into a new Box (Vec)
+
+    println!("The OK_Engine line has {} useful engines.", ok_engine_line.len());
+
+
+
+
+
 
 /*
 
