@@ -80,8 +80,8 @@ impl TrainCar {
 
 impl Train {
     fn dispatch(&self) {
-        println!("Train {} departing with {} cars!", self.id, self.cars.len());
-            for car in &self.cars {
+        println!("Train {} departing with {} cars!", self.id, self.cars.len());for car in &self.cars {
+                //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
                 match car.prepare_for_departure() {
                     Ok(msg) => println!("Train Car {}: {}", car.id, msg),
                     Err(e) => {
@@ -90,6 +90,16 @@ impl Train {
                     }
                 }
             }
+
+            
+
+            let ok_engine_line: Vec<&TrainCar> = self.cars.iter()// // 1. Start the conveyor belt
+            .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels and Low_Fuel cars
+            .collect(); // 3. Put cars that did not return an error into a new Box (Vec)
+
+            println!("Train {} has {} cars ready for departure!", self.id, ok_engine_line.len());
+
+            
     }
 }
 
@@ -146,9 +156,10 @@ the_line.dispatch();
 
 
 
-/* */
+
 //let test_line = vec![&thomas_car, &diesel_car, &percy_car];
 let ok_engine_line: Vec<&TrainCar> = the_line.cars.iter()// // 1. Start the conveyor belt
+        //why do we put & before car in the filter closure? Is it because we are iterating over references to TrainCar objects, so we need to dereference them to access their methods and properties? Yes, that's correct! When we use the iter() method on the vector of TrainCar objects, it returns an iterator that yields references to the TrainCar objects. Therefore, in the filter closure, we receive a reference to a TrainCar (let's call it car), and we need to dereference it (using &car) to access its methods and properties. This is because the methods like prepare_for_departure() are defined on the TrainCar struct, and we need to dereference the reference to call those methods on the actual TrainCar object. So by using &car in the filter closure, we are able to access the methods and properties of the TrainCar objects correctly.
         .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
         .collect(); // 3. Put the survivors into a new Box (Vec)
 
