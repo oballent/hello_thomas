@@ -38,7 +38,6 @@ enum TrainError {
     LowFuel,
     ContrabandOnBoard,
     NoCargoOrPassengers,
-    NoFunctionalCars,
 }
 
 impl TrainCar {
@@ -61,7 +60,7 @@ impl TrainCar {
             (None, None) => Err(TrainError::NoCargoOrPassengers),
             (Some(cargo), None) => Ok(format!("Cargo on board: {}", cargo)),
             (None, Some(passenger)) => Ok(format!("Passenger aboard: {}", passenger)),
-            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {}, Passenger aboard: {}", cargo, passenger)),
+            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {}. Passenger aboard: {}", cargo, passenger)),
         }
         
         /*
@@ -95,7 +94,7 @@ impl TrainCar {
          // Where does OK(String::from("The train is ready for departure!")) come from? Is it just a way to return a successful result from the function, indicating that the train is ready for departure? Yes, that's correct! The Ok(String::from("The train is ready for departure!")) is a way to return a successful result from the prepare_for_departure() function. It indicates that the engine started successfully and the train is ready for departure. The Ok variant of the Result type is used to represent a successful outcome, while the Err variant is used to represent an error. In this case, if the engine starts successfully, we return an Ok value with a message indicating that the train is ready for departure. If there was an error starting the engine (like if it's a Diesel), we would return an Err value with the appropriate TrainError.
          let contraband_status = self.check_contraband()?;
          
-         Ok(format!("Preparing Car {} for departure. Freight Status: {}, Contraband Status: {}", self.id, freight_status, contraband_status))
+         Ok(format!("Preparing Car {} for departure. Freight Status: {}. Contraband Status: {}", self.id, freight_status, contraband_status))
     }
 
 }
@@ -138,6 +137,7 @@ impl Train {
     }
 
     fn dispatch(&self) -> Result<String, TrainError> {
+        /*
         match self.prepare_for_departure() {
             Ok(msg) => println!("Train {} is ready for departure: {}", self.id, msg),
             Err(e) => {
@@ -145,6 +145,9 @@ impl Train {
                 return Err(e);
             }
         }
+        */
+
+        let ok: String = String::from(format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?));
 
         println!("Train {} has {} cars to prepare for departure!", self.id, self.cars.len());
         for car in &self.cars {
@@ -164,7 +167,9 @@ impl Train {
         .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels and Low_Fuel cars
         .collect(); // 3. Put cars that did not return an error into a new Box (Vec)
 
-        Ok(format!("Train {} has {} cars ready for departure!", self.id, ok_engine_line.len()))
+        let ok_car_ids: String = ok_engine_line.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
+
+        Ok(format!("{}:::::::::Train {} has {} cars ready for departure! Car(s): [{}]",ok, self.id, ok_engine_line.len(), ok_car_ids))
 
             
     }
@@ -181,14 +186,15 @@ fn main() {
 };*/
 
 let carriage = TrainCar { id:1, cargo: None, passenger: Some(String::from("Lemon:")), contraband: Some(String::from("briefcase full of money"))};
-let boxcar = TrainCar { id:2, cargo: None, passenger: None, contraband: None};
-let caboose = TrainCar { id:3, cargo: Some(String::from("bananas")), passenger: Some(String::from("Tangerine")), contraband: None};
+let dining_car = TrainCar { id:2, cargo: None, passenger: Some(String::from("Ladybug")), contraband: None};
+let boxcar = TrainCar { id:3, cargo: None, passenger: None, contraband: None};
+let caboose = TrainCar { id:4, cargo: Some(String::from("bananas")), passenger: Some(String::from("Tangerine")), contraband: None};
 
 let mut the_line = Train {
     id: 1,
     engine: EngineType::Diesel,
     fuel_level: FuelLevel::Low,
-    cars: vec![carriage, boxcar, caboose],
+    cars: vec![carriage, dining_car, boxcar, caboose],
 };
 
 /*
@@ -215,13 +221,22 @@ for car in &the_line.cars {
     }
 }
 */
-the_line.dispatch();
+match the_line.dispatch() {
+    Ok(msg) => println!("{}", msg),
+    Err(e) => println!("Error dispatching the train: {:?}", e),
+}
 the_line.rehabilitate();
-the_line.dispatch();
+match the_line.dispatch() {
+    Ok(msg) => println!("{}", msg),
+    Err(e) => println!("Error dispatching the train: {:?}", e),
+}
 
 
 the_line.refuel();
-the_line.dispatch();
+match the_line.dispatch() {
+    Ok(msg) => println!("{}", msg),
+    Err(e) => println!("Error dispatching the train: {:?}", e),
+}
 
 
 
