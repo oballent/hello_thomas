@@ -57,19 +57,35 @@ impl TrainCar {
     }
 
     fn check_freight(&self) -> Result<String, TrainError> {
+        match (&self.cargo, &self.passenger) {
+            (None, None) => Err(TrainError::NoCargoOrPassengers),
+            (Some(cargo), None) => Ok(format!("Cargo on board: {}", cargo)),
+            (None, Some(passenger)) => Ok(format!("Passenger aboard: {}", passenger)),
+            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {}, Passenger aboard: {}", cargo, passenger)),
+        }
+        
+        /*
         if self.cargo.is_none() && self.passenger.is_none() {
             Err(TrainError::NoCargoOrPassengers)
         } else {
             Ok(String::from("Passengers or cargo aboard this car!"))
         }
+        */
     }
 
     fn check_contraband(&self) -> Result<String, TrainError> {
+        match &self.contraband {
+            Some(item) => Err(TrainError::ContrabandOnBoard),
+            None => Ok(String::from("No contraband aboard this car!")),
+        }
+
+        /*
         if self.contraband.is_some() {
             Err(TrainError::ContrabandOnBoard)
         } else {
             Ok(String::from("No contraband aboard this car!"))
         }
+        */
     }
 
     
