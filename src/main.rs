@@ -1,11 +1,19 @@
 use std::clone;
 
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
+
+#[derive(Debug)]
+struct Cargo{
+    item: String,
+    weight: f32,
+    contains_contraband: bool,
+}
+
+
 struct TrainCar {
     id: u32,
-    cargo: Option<String>,
+    cargo: Option<Cargo>,
     passenger: Option<String>,
-    contraband: Option<String>,
 }
 
 struct Train{
@@ -40,6 +48,20 @@ enum TrainError {
     NoCargoOrPassengers,
 }
 
+
+
+impl Cargo {
+    fn check_contraband(&self) -> Result<String, TrainError> {
+        if self.contains_contraband {
+            Err(TrainError::ContrabandOnBoard)
+        } else {
+            Ok(String::from("No contraband aboard this cargo!"))
+        }
+    }
+}
+
+
+
 impl TrainCar {
     fn check_passenger(&self) {
         match &self.passenger {
@@ -50,7 +72,7 @@ impl TrainCar {
 
     fn check_cargo(&self) {
         match &self.cargo {
-            Some(item) => println!("Cargo on board: {}", item),
+            Some(item) => println!("Cargo on board: {:?}", item),
             None => println!("Ain't no cargo on this #@$! train car!"),
         }
     }
@@ -58,9 +80,9 @@ impl TrainCar {
     fn check_freight(&self) -> Result<String, TrainError> {
         match (&self.cargo, &self.passenger) {
             (None, None) => Err(TrainError::NoCargoOrPassengers),
-            (Some(cargo), None) => Ok(format!("Cargo on board: {}", cargo)),
+            (Some(cargo), None) => Ok(format!("Cargo on board: {:?}", cargo)),
             (None, Some(passenger)) => Ok(format!("Passenger aboard: {}", passenger)),
-            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {}. Passenger aboard: {}", cargo, passenger)),
+            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {:?}. Passenger aboard: {}", cargo, passenger)),
         }
         
         /*
@@ -72,11 +94,15 @@ impl TrainCar {
         */
     }
 
+
+    /*
     fn check_contraband(&self) -> Result<String, TrainError> {
-        match &self.contraband {
+        match &self.cargo.contraband {
             Some(item) => Err(TrainError::ContrabandOnBoard),
             None => Ok(String::from("No contraband aboard this car!")),
         }
+    */
+        
 
         /*
         if self.contraband.is_some() {
@@ -84,7 +110,14 @@ impl TrainCar {
         } else {
             Ok(String::from("No contraband aboard this car!"))
         }
-        */
+    }
+    */
+
+    fn check_contraband(&self) -> Result<String, TrainError> {
+        match &self.cargo {
+            Some(cargo) => cargo.check_contraband(),
+            None => Ok(String::from("No cargo on this car, so no contraband!")),
+        }
     }
 
     
@@ -147,7 +180,7 @@ impl Train {
         }
         */
 
-        let ok: String = String::from(format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?));
+        let ok: String = format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?);
 
         println!("Train {} has {} cars to prepare for departure!", self.id, self.cars.len());
         for car in &self.cars {
@@ -185,10 +218,19 @@ fn main() {
     cars: Vec::<TrainCar>::new(),
 };*/
 
-let carriage = TrainCar { id:1, cargo: None, passenger: Some(String::from("Lemon:")), contraband: Some(String::from("briefcase full of money"))};
-let dining_car = TrainCar { id:2, cargo: None, passenger: Some(String::from("Ladybug")), contraband: None};
-let boxcar = TrainCar { id:3, cargo: None, passenger: None, contraband: None};
-let caboose = TrainCar { id:4, cargo: Some(String::from("bananas")), passenger: Some(String::from("Tangerine")), contraband: None};
+
+let cargo1 = Cargo { item: String::from("bananas"), weight: 100.0, contains_contraband: false };
+let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 50.0, contains_contraband: true };
+let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 200.0, contains_contraband: false };
+let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 150.0, contains_contraband: false };
+let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75.0, contains_contraband: true };
+let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 300.0, contains_contraband: false };
+
+
+let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
+let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
+let boxcar = TrainCar { id:3, cargo: Some(cargo5), passenger: None,};
+let caboose = TrainCar { id:4, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
 
 let mut the_line = Train {
     id: 1,
