@@ -180,7 +180,7 @@ impl Train {
         }
         */
 
-        let ok: String = format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?);
+        let ok_start: String = format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?);
 
         println!("Train {} has {} cars to prepare for departure!", self.id, self.cars.len());
         for car in &self.cars {
@@ -202,7 +202,7 @@ impl Train {
 
         let ok_car_ids: String = ok_engine_line.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
 
-        Ok(format!("{}:::::::::Train {} has {} cars ready for departure! Car(s): [{}]",ok, self.id, ok_engine_line.len(), ok_car_ids))
+        Ok(format!("{}:::::::::Train {} has {} cars ready for departure! Car(s): [{}]",ok_start, self.id, ok_engine_line.len(), ok_car_ids))
 
             
     }
