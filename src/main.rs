@@ -2,84 +2,6 @@ use std::clone;
 
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 
-struct Railyard {
-    trains: Vec<Train>,
-    cars: Vec<TrainCar>,
-    //cargo: Vec<Cargo>,
-}
-
-impl Railyard {
-    /*
-    fn new() -> Self {
-        Railyard {
-            trains: Vec::new(),
-            cars: Vec::new(),
-            cargo: Vec::new(),
-        }
-    }
-    */
-
-
-    fn house(&mut self, train: Train) {
-        self.trains.push(train);
-    }
-
-    fn add_car(&mut self, car: TrainCar) {
-        self.cars.push(car);
-    }
-
-    fn decouple(&mut self, train:  &mut Train, car: &mut TrainCar) {
-        // Logic to decouple a car from a train
-        // For example, we could remove the car from the train's list of cars and add it to the railyard's list of cars
-        if let Some(pos) = train.cars.iter().position(|c| c.id == car.id) {
-            let removed_car = train.cars.remove(pos);
-            self.cars.push(removed_car);
-            println!("Decoupled Car {} from Train {} and added it to the railyard.", car.id, train.id);
-        } else {
-            println!("Car {} is not attached to Train {}.", car.id, train.id);
-        }
-    }
-
-/*
-    fn add_cargo(&mut self, cargo: Cargo) {
-        self.cargo.push(cargo);
-    }
-*/
-
-     fn dispatch_trains(&self) {
-        for train in &self.trains {
-            match train.dispatch() {
-                Ok(ok_cars) => println!("Train {} is ready for departure with {} cars!", train.id, ok_cars.len()),
-                Err(e) => println!("Train {} cannot depart: {:?}", train.id, e),
-            }
-        }
-    }
-
-    pub fn service_train(&mut self, mut train: Train) -> Train {
-        println!("Servicing Train {}...", train.id);
-        train.rehabilitate();
-        train.refuel();
-        
-        let mut ok_cars: Vec<TrainCar> = Vec::new();
-        for car in train.cars.drain(..) {
-            match car.prepare_for_departure() {
-                Ok(msg) => {
-                    println!("Train Car {} is ready for departure: {}", car.id, msg);
-                    ok_cars.push(car);
-                }
-                Err(e) => {
-                    println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
-                    self.cars.push(car);
-                }
-            }
-        }
-        train.cars = ok_cars;
-        train
-    }
-        
-}   
-
-
 
 #[derive(Debug)]
 struct Cargo{
@@ -287,6 +209,123 @@ impl Train {
 }
 
 
+
+
+
+struct Railyard {
+    trains: Vec<Train>,
+    cars: Vec<TrainCar>,
+    //cargo: Vec<Cargo>,
+}
+
+impl Railyard {
+    /*
+    fn new() -> Self {
+        Railyard {
+            trains: Vec::new(),
+            cars: Vec::new(),
+            cargo: Vec::new(),
+        }
+    }
+    */
+
+
+    fn house(&mut self, train: Train) {
+        self.trains.push(train);
+    }
+
+    fn add_car(&mut self, car: TrainCar) {
+        self.cars.push(car);
+    }
+
+    /// Move a car identified by its `car_id` from the yard into a train.
+    ///
+    /// Takes ownership of the car by removing it from `self.cars` and pushing it
+    /// into `train.cars`.  This avoids double-moving the same `TrainCar` value
+    /// (which is what caused the compiler errors you saw earlier).
+    fn couple_by_id(&mut self, train: &mut Train, car_id: u32) {
+        if let Some(pos) = self.cars.iter().position(|c| c.id == car_id) {
+            let car = self.cars.remove(pos);
+            train.cars.push(car);
+            println!(
+                "Coupled Car {} to Train {} and removed it from the railyard.",
+                car_id,
+                train.id
+            );
+        } else {
+            println!("Car {} is not available in the railyard.", car_id);
+        }
+    }
+
+    fn couple(&mut self, train: &mut Train, car: TrainCar) {
+        // Logic to couple a car to a train
+        // For example, we could add the car to the train's list of cars and remove it from the railyard's list of cars
+        if let Some(pos) = self.cars.iter().position(|c| c.id == car.id) {
+            let removed_car = self.cars.remove(pos);
+            train.cars.push(removed_car);
+            println!("Coupled Car {} to Train {} and removed it from the railyard.", car.id, train.id);
+        } else {
+            println!("Car {} is not available in the railyard.", car.id);
+        }
+    }
+
+    fn decouple(&mut self, train:  &mut Train, car: &mut TrainCar) {
+        // Logic to decouple a car from a train
+        // For example, we could remove the car from the train's list of cars and add it to the railyard's list of cars
+        if let Some(pos) = train.cars.iter().position(|c| c.id == car.id) {
+            let removed_car = train.cars.remove(pos);
+            self.cars.push(removed_car);
+            println!("Decoupled Car {} from Train {} and added it to the railyard.", car.id, train.id);
+        } else {
+            println!("Car {} is not attached to Train {}.", car.id, train.id);
+        }
+    }
+
+/*
+    fn add_cargo(&mut self, cargo: Cargo) {
+        self.cargo.push(cargo);
+    }
+*/
+
+     fn dispatch_trains(&self) {
+        for train in &self.trains {
+            match train.dispatch() {
+                Ok(ok_cars) => println!("Train {} is ready for departure with {} cars!", train.id, ok_cars.len()),
+                Err(e) => println!("Train {} cannot depart: {:?}", train.id, e),
+            }
+        }
+    }
+
+    pub fn service_train(&mut self, mut train: Train) -> Train {
+        println!("Servicing Train {}...", train.id);
+        train.rehabilitate();
+        train.refuel();
+        
+        let mut ok_cars: Vec<TrainCar> = Vec::new();
+        for car in train.cars.drain(..) {
+            match car.prepare_for_departure() {
+                Ok(msg) => {
+                    println!("Train Car {} is ready for departure: {}", car.id, msg);
+                    ok_cars.push(car);
+                }
+                Err(e) => {
+                    println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
+                    self.cars.push(car);
+                }
+            }
+        }
+        train.cars = ok_cars;
+        train
+    }
+        
+}   
+
+
+
+
+
+
+
 fn main() {
 
 
@@ -319,10 +358,22 @@ let mut the_line = Train {
     id: 1,
     engine: EngineType::Diesel,
     fuel_level: FuelLevel::Low,
-    cars: vec![carriage, dining_car, boxcar, caboose],
+    //cars: vec![carriage, dining_car, boxcar, caboose],
+    cars: Vec::new(),
 };
 
+yard.add_car(carriage);
+yard.add_car(dining_car);
+yard.add_car(boxcar);
+yard.add_car(caboose);
 
+
+// transfer cars from the yard into the_line by identifier; the local vars have
+// already been moved into the yard, so we can't use them again.
+yard.couple_by_id(&mut the_line, 1);
+yard.couple_by_id(&mut the_line, 2);
+yard.couple_by_id(&mut the_line, 3);
+yard.couple_by_id(&mut the_line, 4);
 
 
 the_line = yard.service_train(the_line);
