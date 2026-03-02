@@ -2,6 +2,85 @@ use std::clone;
 
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 
+struct Railyard {
+    trains: Vec<Train>,
+    cars: Vec<TrainCar>,
+    //cargo: Vec<Cargo>,
+}
+
+impl Railyard {
+    /*
+    fn new() -> Self {
+        Railyard {
+            trains: Vec::new(),
+            cars: Vec::new(),
+            cargo: Vec::new(),
+        }
+    }
+    */
+
+
+    fn house(&mut self, train: Train) {
+        self.trains.push(train);
+    }
+
+    fn add_car(&mut self, car: TrainCar) {
+        self.cars.push(car);
+    }
+
+    fn decouple(&mut self, train:  &mut Train, car: &mut TrainCar) {
+        // Logic to decouple a car from a train
+        // For example, we could remove the car from the train's list of cars and add it to the railyard's list of cars
+        if let Some(pos) = train.cars.iter().position(|c| c.id == car.id) {
+            let removed_car = train.cars.remove(pos);
+            self.cars.push(removed_car);
+            println!("Decoupled Car {} from Train {} and added it to the railyard.", car.id, train.id);
+        } else {
+            println!("Car {} is not attached to Train {}.", car.id, train.id);
+        }
+    }
+
+/*
+    fn add_cargo(&mut self, cargo: Cargo) {
+        self.cargo.push(cargo);
+    }
+*/
+
+     fn dispatch_trains(&self) {
+        for train in &self.trains {
+            match train.dispatch() {
+                Ok(ok_cars) => println!("Train {} is ready for departure with {} cars!", train.id, ok_cars.len()),
+                Err(e) => println!("Train {} cannot depart: {:?}", train.id, e),
+            }
+        }
+    }
+
+    pub fn service_train(&mut self, mut train: Train) -> Train {
+        println!("Servicing Train {}...", train.id);
+        train.rehabilitate();
+        train.refuel();
+        
+        let mut ok_cars: Vec<TrainCar> = Vec::new();
+        for car in train.cars.drain(..) {
+            match car.prepare_for_departure() {
+                Ok(msg) => {
+                    println!("Train Car {} is ready for departure: {}", car.id, msg);
+                    ok_cars.push(car);
+                }
+                Err(e) => {
+                    println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
+                    self.cars.push(car);
+                }
+            }
+        }
+        train.cars = ok_cars;
+        train
+    }
+        
+}   
+
+
+
 #[derive(Debug)]
 struct Cargo{
     item: String,
@@ -217,6 +296,11 @@ fn main() {
     cars: Vec::<TrainCar>::new(),
 };*/
 
+let mut yard: Railyard = Railyard {
+    trains: Vec::new(),
+    cars: Vec::new(),
+    //cargo: Vec::new(),
+};
 
 let cargo1 = Cargo { item: String::from("bananas"), weight: 100.0, contains_contraband: false };
 let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 50.0, contains_contraband: true };
@@ -237,6 +321,17 @@ let mut the_line = Train {
     fuel_level: FuelLevel::Low,
     cars: vec![carriage, dining_car, boxcar, caboose],
 };
+
+
+
+
+the_line = yard.service_train(the_line);
+
+the_line.dispatch().map(|ok_cars| {
+    let ok_car_ids: String = ok_cars.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
+    println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+}).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+
 
 /*
 let mut the_line = Train {
@@ -265,7 +360,7 @@ for car in &the_line.cars {
 
 
 
-
+/*
 the_line.rehabilitate();
 the_line.refuel();
 
@@ -280,6 +375,28 @@ let ok_car_ids: String = ok_line.iter()
     .join(", ");
 
 print!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_line.len(), ok_car_ids);
+*/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 /* 
 
 the_line.rehabilitate();
