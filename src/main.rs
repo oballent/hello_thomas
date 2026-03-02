@@ -52,10 +52,9 @@ enum TrainError {
 
 impl Cargo {
     fn check_contraband(&self) -> Result<String, TrainError> {
-        if self.contains_contraband {
-            Err(TrainError::ContrabandOnBoard)
-        } else {
-            Ok(String::from("No contraband aboard this cargo!"))
+        match self.contains_contraband {
+            true => Err(TrainError::ContrabandOnBoard),
+            false => Ok(String::from("No contraband aboard this cargo!")),
         }
     }
 }
