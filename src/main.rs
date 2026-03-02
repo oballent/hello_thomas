@@ -168,7 +168,7 @@ impl Train {
          Ok(format!("Departure Status: {}, Fuel Status: {:?}", engine_status, fuel_status))
     }
 
-    fn dispatch(&self) -> Result<String, TrainError> {
+    fn dispatch(&self) -> Result<Vec<&TrainCar>, TrainError> {
         /*
         match self.prepare_for_departure() {
             Ok(msg) => println!("Train {} is ready for departure: {}", self.id, msg),
@@ -199,10 +199,10 @@ impl Train {
         .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels and Low_Fuel cars
         .collect(); // 3. Put cars that did not return an error into a new Box (Vec)
 
-        let ok_car_ids: String = ok_engine_line.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
+        //let ok_car_ids: String = ok_engine_line.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
 
-        Ok(format!("{}:::::::::Train {} has {} cars ready for departure! Car(s): [{}]",ok_start, self.id, ok_engine_line.len(), ok_car_ids))
-
+        //Ok(format!("{}:::::::::Train {} has {} cars ready for departure! Car(s): [{}]",ok_start, self.id, ok_engine_line.len(), ok_car_ids))
+        Ok(ok_engine_line)
             
     }
 }
@@ -262,24 +262,40 @@ for car in &the_line.cars {
     }
 }
 */
-match the_line.dispatch() {
-    Ok(msg) => println!("{}", msg),
-    Err(e) => println!("Error dispatching the train: {:?}", e),
-}
+
+
+
+
+the_line.rehabilitate();
+the_line.refuel();
+
+let ok_line = the_line.dispatch().unwrap_or_else(|e| {
+    println!("Error dispatching the train: {:?}", e);
+    vec![]
+});
+
+let ok_car_ids: String = ok_line.iter()
+    .map(|car| car.id.to_string())
+    .collect::<Vec<String>>()
+    .join(", ");
+
+print!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_line.len(), ok_car_ids);
+/* 
+
 the_line.rehabilitate();
 match the_line.dispatch() {
-    Ok(msg) => println!("{}", msg),
+    Ok(ok_cars) => ok_line = ok_cars,
     Err(e) => println!("Error dispatching the train: {:?}", e),
 }
 
 
 the_line.refuel();
 match the_line.dispatch() {
-    Ok(msg) => println!("{}", msg),
+    Ok(ok_cars) => ok_line = ok_cars,
     Err(e) => println!("Error dispatching the train: {:?}", e),
 }
 
-
+*/
 
 /* 
 //let test_line = vec![&thomas_car, &diesel_car, &percy_car];
