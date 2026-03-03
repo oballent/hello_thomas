@@ -85,33 +85,9 @@ impl TrainCar {
             (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {:?}. Passenger aboard: {}", cargo, passenger)),
         }
         
-        /*
-        if self.cargo.is_none() && self.passenger.is_none() {
-            Err(TrainError::NoCargoOrPassengers)
-        } else {
-            Ok(String::from("Passengers or cargo aboard this car!"))
-        }
-        */
     }
 
 
-    /*
-    fn check_contraband(&self) -> Result<String, TrainError> {
-        match &self.cargo.contraband {
-            Some(item) => Err(TrainError::ContrabandOnBoard),
-            None => Ok(String::from("No contraband aboard this car!")),
-        }
-    */
-        
-
-        /*
-        if self.contraband.is_some() {
-            Err(TrainError::ContrabandOnBoard)
-        } else {
-            Ok(String::from("No contraband aboard this car!"))
-        }
-    }
-    */
 
     fn check_contraband(&self) -> Result<String, TrainError> {
         match &self.cargo {
@@ -159,6 +135,7 @@ impl Train {
         self.fuel_level = FuelLevel::Full;
     }
 
+
     
     fn prepare_for_departure(&self) -> Result<String, TrainError> {
         //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
@@ -170,19 +147,15 @@ impl Train {
     }
 
     fn dispatch(&self) -> Result<Vec<&TrainCar>, TrainError> {
-        /*
+        
         match self.prepare_for_departure() {
-            Ok(msg) => println!("Train {} is ready for departure: {}", self.id, msg),
+            Ok(status) => println!("Train {}: {}", self.id, status),
             Err(e) => {
                 println!("Train {} cannot depart: {:?}", self.id, e);
                 return Err(e);
             }
         }
-        */
 
-        let ok_start: String = format!("Train {} is ready for departure!: {}", self.id, self.prepare_for_departure()?);
-
-        println!("Train {} has {} cars to prepare for departure!", self.id, self.cars.len());
         for car in &self.cars {
             //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
             match car.prepare_for_departure() {
@@ -194,8 +167,6 @@ impl Train {
             }
         }
 
-            
-
         let ok_engine_line: Vec<&TrainCar> = self.cars.iter()// // 1. Start the conveyor belt
         .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels and Low_Fuel cars
         .collect(); // 3. Put cars that did not return an error into a new Box (Vec)
@@ -206,6 +177,19 @@ impl Train {
         Ok(ok_engine_line)
             
     }
+
+
+    fn calculate_cargo_weight(&self) -> f32 {
+        self.cars.iter()
+            .map(|car|{
+                match &car.cargo {
+                    Some(cargo) => cargo.weight,
+                    None => 0.0,
+                }
+            })
+            .sum()
+    }
+
 }
 
 
@@ -219,15 +203,15 @@ struct Railyard {
 }
 
 impl Railyard {
-    /*
+    
     fn new() -> Self {
         Railyard {
             trains: Vec::new(),
             cars: Vec::new(),
-            cargo: Vec::new(),
+            //cargo: Vec::new(),
         }
     }
-    */
+    
 
 
     fn house(&mut self, train: Train) {
@@ -254,6 +238,20 @@ impl Railyard {
             );
         } else {
             println!("Car {} is not available in the railyard.", car_id);
+        }
+    }
+
+    fn decouple_by_id(&mut self, train: &mut Train, car_id: u32) {
+        if let Some(pos) = train.cars.iter().position(|c| c.id == car_id) {
+            let car = train.cars.remove(pos);
+            self.cars.push(car);
+            println!(
+                "Decoupled Car {} from Train {} and added it to the railyard.",
+                car_id,
+                train.id
+            );
+        } else {
+            println!("Car {} is not attached to Train {}.", car_id, train.id);
         }
     }
 
@@ -379,193 +377,16 @@ yard.couple_by_id(&mut the_line, 4);
 the_line = yard.service_train(the_line);
 
 the_line.dispatch().map(|ok_cars| {
-    let ok_car_ids: String = ok_cars.iter().map(|&car| car.id.to_string()).collect::<Vec<String>>().join(", ");
+    let ok_car_ids: String = ok_cars.iter()
+        .map(|car| car.id.to_string())
+        .collect::<Vec<String>>()
+        .join(", ");
     println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
 }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
 
-/*
-let mut the_line = Train {
-    id: 1,
-    cars: Vec::new(),
-};
+println!("The total cargo weight on train {} is {} tons.", the_line.id, the_line.calculate_cargo_weight());
 
-
-the_line.cars.push(thomas);
-the_line.cars.push(diesel);
-the_line.cars.push(percy);
-*/
-
-/*
-for car in &the_line.cars {
-    //println!("Train Car {}: Engine Personality - {}, Fuel Level - {:?}", car.id, describe_personality(&car.engine), car.fuel_level);
-    match car.prepare_for_departure() {
-        Ok(msg) => println!("Train Car {}: {}", car.id, msg),
-        Err(e) => {
-            println!("Train Car {}: Error preparing for departure: {:?}", car.id, e);
-            println!("--- Dispatcher: Skipping car {} and moving to next... ---", car.id);
-        }
-    }
-}
-*/
-
-
-
-/*
-the_line.rehabilitate();
-the_line.refuel();
-
-let ok_line = the_line.dispatch().unwrap_or_else(|e| {
-    println!("Error dispatching the train: {:?}", e);
-    vec![]
-});
-
-let ok_car_ids: String = ok_line.iter()
-    .map(|car| car.id.to_string())
-    .collect::<Vec<String>>()
-    .join(", ");
-
-print!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_line.len(), ok_car_ids);
-*/
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-/* 
-
-the_line.rehabilitate();
-match the_line.dispatch() {
-    Ok(ok_cars) => ok_line = ok_cars,
-    Err(e) => println!("Error dispatching the train: {:?}", e),
-}
-
-
-the_line.refuel();
-match the_line.dispatch() {
-    Ok(ok_cars) => ok_line = ok_cars,
-    Err(e) => println!("Error dispatching the train: {:?}", e),
-}
-
-*/
-
-/* 
-//let test_line = vec![&thomas_car, &diesel_car, &percy_car];
-let ok_engine_line: Vec<&TrainCar> = the_line.cars.iter()// // 1. Start the conveyor belt
-        //why do we put & before car in the filter closure? Is it because we are iterating over references to TrainCar objects, so we need to dereference them to access their methods and properties? Yes, that's correct! When we use the iter() method on the vector of TrainCar objects, it returns an iterator that yields references to the TrainCar objects. Therefore, in the filter closure, we receive a reference to a TrainCar (let's call it car), and we need to dereference it (using &car) to access its methods and properties. This is because the methods like prepare_for_departure() are defined on the TrainCar struct, and we need to dereference the reference to call those methods on the actual TrainCar object. So by using &car in the filter closure, we are able to access the methods and properties of the TrainCar objects correctly.
-        .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
-        .collect(); // 3. Put the survivors into a new Box (Vec)
-
-    println!("The OK_Engine line has {} useful engines.", ok_engine_line.len());
-
-*/
-
-
-
-
-
-
-/*
-
-let thomas = TrainCar { id: 1, engine: EngineType::Thomas, passenger: Some(String::from("Lemon")), fuel_level: FuelLevel::Low };
-let diesel = TrainCar { id: 2, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
-let percy = TrainCar { id: 3, engine: EngineType::Percy, passenger: Some(String::from("Tangerine")), fuel_level: FuelLevel::Full };
-
-let the_line = vec![thomas, diesel, percy]; // Shorthand to create a Vec
-
-    // THE ITERATOR PIPELINE:
-    let ok_engine_line: Vec<&TrainCar> = the_line.iter() // 1. Start the conveyor belt
-        .filter(|car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels
-        .collect(); // 3. Put the survivors into a new Box (Vec)
-
-    println!("The OK_Engine line has {} useful engines.", ok_engine_line.len());
-
-*/
-
-
-
-
-
-
-
-/*
-
-//let mut car: TrainCar = TrainCar { id: 9, engine: EngineType::Diesel, passenger: None, fuel_level: FuelLevel::Low };
-
-match car.start_engine() {
-    Ok(message) => println!("{}", message),
-    Err(error) => println!("Error starting the engine: {:?}", error),
-}
-
-match car.check_fuel() {
-    Ok(_) => println!("Fuel level is sufficient for departure."),
-    Err(error) => println!("Error checking fuel level: {:?}", error),
-}
-
-match car.prepare_for_departure() {
-    Ok(status) => println!("{}", status),
-    Err(error) => println!("Error preparing for departure: {:?}", error),
-}
-
-//car.prepare_for_departure();
-//car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
-
-car.rehabilitate();
-
-match car.start_engine() {
-    Ok(message) => println!("{}", message),
-    Err(error) => println!("Error starting the engine: {:?}", error),
-}
-
-match car.check_fuel() {
-    Ok(_) => println!("Fuel level is sufficient for departure."),
-    Err(error) => println!("Error checking fuel level: {:?}", error),
-}
-
-match car.prepare_for_departure() {
-    Ok(status) => println!("{}", status),
-    Err(error) => println!("Error preparing for departure: {:?}", error),
-}
-
-car.refuel();
-
-
-
-match car.start_engine() {
-    Ok(message) => println!("{}", message),
-    Err(error) => println!("Error starting the engine: {:?}", error),
-}
-
-match car.check_fuel() {
-    Ok(_) => println!("Fuel level is sufficient for departure."),
-    Err(error) => println!("Error checking fuel level: {:?}", error),
-}
-
-match car.prepare_for_departure() {
-    Ok(status) => println!("{}", status),
-    Err(error) => println!("Error preparing for departure: {:?}", error),
-}
-
-*/
-
-//car.prepare_for_departure();
-//car.prepare_for_departure().map(|status| println!("{}", status)).unwrap_or_else(|error| println!("Error preparing for departure: {:?}", error));
 
 }
 
@@ -573,18 +394,9 @@ match car.prepare_for_departure() {
 
 fn describe_personality(engine: &EngineType) -> String{
     match engine {
-        EngineType::Thomas => String::from("Thomas is a friendly and helpful engine, always ready to lend a hand and make friends. Thomas is the best."),
-        EngineType::Percy => String::from("Percy is a brave and intuitive little engine that doesn't always think things through, but always does his best."),
-        EngineType::Gordon => String::from("Gordon is proud and doesn't like to admit when he's wrong, but he cares deeply about his friends, and he's the strongest."),
-        EngineType::Diesel => String::from("Diesel is a troublemaker, always causing mischief and chaos on the tracks."),
+        EngineType::Thomas => String::from("Thomas is a friendly and helpful engine, always ready to lend a hand and make friends. Thomas is the most popular."),
+        EngineType::Percy => String::from("Percy is a brave and intuitive little engine that doesn't always think things through, but always does his best. Percy is the most adventurous."),
+        EngineType::Gordon => String::from("Gordon is proud and doesn't like to admit when he's wrong, but he cares about his friends. Gordon is the strongest."),
+        EngineType::Diesel => String::from("Diesel is a troublemaker."),
     }
 }
-
-/*
-fn rehabilitate(engine: &mut EngineType) {
-    println!("Rehabilitating the engine's personality...");
-    // This function would contain logic to rehabilitate the engine's personality
-    // For example, if it's a Diesel, we could change it to a Thomas
-    *engine = EngineType::Thomas;
-} 
-*/
