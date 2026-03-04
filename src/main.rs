@@ -7,8 +7,9 @@ use std::collections::HashMap;
 #[derive(Debug)]
 struct Cargo{
     item: String,
-    weight: u32,
-    contains_contraband: bool,
+    manifest_weight: u32,
+    actual_weight: u32,
+    contraband: Option<String>,
 }
 
 
@@ -54,9 +55,9 @@ enum TrainError {
 
 impl Cargo {
     fn check_contraband(&self) -> Result<String, TrainError> {
-        match self.contains_contraband {
-            true => Err(TrainError::ContrabandOnBoard),
-            false => Ok(String::from("No contraband aboard this cargo!")),
+        match self.manifest_weight == self.actual_weight{
+            true => Ok(format!("Cargo '{}' is clear of contraband.", self.item)),
+            false => Err(TrainError::ContrabandOnBoard),
         }
     }
 }
@@ -71,10 +72,12 @@ impl TrainCar {
         }
     }
 
-    fn check_cargo(&self) {
-        match &self.cargo {
-            Some(item) => println!("Cargo on board: {:?}", item),
-            None => println!("Ain't no cargo on this #@$! train car!"),
+    /* */
+    fn check_contraband(&self) -> Result<String, TrainError> {
+        if let Some(cargo) = &self.cargo {
+            cargo.check_contraband()
+        } else {
+            Ok(String::from("No cargo on board, so no contraband!"))
         }
     }
 
@@ -89,14 +92,14 @@ impl TrainCar {
     }
 
 
-
+/*
     fn check_contraband(&self) -> Result<String, TrainError> {
-        match &self.cargo {
-            Some(cargo) => cargo.check_contraband(),
-            None => Ok(String::from("No cargo on this car, so no contraband!")),
+        match &self.cargo.check_contraband() {
+            Ok(status) => Ok(status),
+            Err(e) => Err(e),
         }
     }
-
+*/
     
     fn prepare_for_departure(&self) -> Result<String, TrainError> {
         //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
@@ -184,7 +187,7 @@ impl Train {
         self.cars.iter()
             .map(|car|{
                 match &car.cargo {
-                    Some(cargo) => cargo.weight,
+                    Some(cargo) => cargo.actual_weight,
                     None => 0,
                 }
             })
@@ -359,18 +362,20 @@ fn main() {
         //cargo: Vec::new(),
     };
 
-    let cargo1 = Cargo { item: String::from("bananas"), weight: 1000, contains_contraband: false };
-    let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 5, contains_contraband: true };
-    let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 2000, contains_contraband: false };
-    let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 1500, contains_contraband: false };
-    let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75, contains_contraband: true };
-    let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 3000, contains_contraband: false };
+    let cargo1 = Cargo { item: String::from("bananas"), manifest_weight: 1000, actual_weight: 1000, contraband: None };
+    let cargo2 = Cargo { item: String::from("crates of oranges"), manifest_weight: 1000, actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
+    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 9001, contraband: Some(String::from("Service Weapon")) };
+    let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), manifest_weight: 1500, actual_weight: 1500, contraband: None };
+    let cargo5 = Cargo { item: String::from("Scrap Metal"), manifest_weight: 10000, actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
+    let cargo6 = Cargo { item: String::from("pallets of electronics"), manifest_weight: 3000, actual_weight: 3000, contraband: None };
 
 
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
-    let boxcar = TrainCar { id:3, cargo: Some(cargo5), passenger: None,};
-    let caboose = TrainCar { id:4, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
+    let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
+    let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Artyom")),};
+    let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),};
+    let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
 
     let mut the_line = Train {
         id: 1,
@@ -382,7 +387,9 @@ fn main() {
 
     yard.add_car(carriage);
     yard.add_car(dining_car);
-    yard.add_car(boxcar);
+    yard.add_car(boxcar1);
+    yard.add_car(boxcar2);
+    yard.add_car(boxcar3);
     yard.add_car(caboose);
 
 
@@ -392,6 +399,8 @@ fn main() {
     yard.couple_by_id(&mut the_line, 2);
     yard.couple_by_id(&mut the_line, 3);
     yard.couple_by_id(&mut the_line, 4);
+    yard.couple_by_id(&mut the_line, 5);
+    yard.couple_by_id(&mut the_line, 6);
 
 
     //the_line = yard.service_train(the_line);
