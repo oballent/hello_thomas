@@ -1,4 +1,5 @@
 use std::clone;
+use std::collections::HashMap;
 
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 
@@ -6,7 +7,7 @@ use std::clone;
 #[derive(Debug)]
 struct Cargo{
     item: String,
-    weight: f32,
+    weight: u32,
     contains_contraband: bool,
 }
 
@@ -179,12 +180,12 @@ impl Train {
     }
 
 
-    fn calculate_cargo_weight(&self) -> f32 {
+    fn calculate_cargo_weight(&self) -> u32 {
         self.cars.iter()
             .map(|car|{
                 match &car.cargo {
                     Some(cargo) => cargo.weight,
-                    None => 0.0,
+                    None => 0,
                 }
             })
             .sum()
@@ -198,7 +199,7 @@ impl Train {
 
 struct Railyard {
     trains: Vec<Train>,
-    cars: Vec<TrainCar>,
+    cars: HashMap<u32, TrainCar>,
     //cargo: Vec<Cargo>,
 }
 
@@ -207,7 +208,7 @@ impl Railyard {
     fn new() -> Self {
         Railyard {
             trains: Vec::new(),
-            cars: Vec::new(),
+            cars: HashMap::new(),
             //cargo: Vec::new(),
         }
     }
@@ -219,7 +220,7 @@ impl Railyard {
     }
 
     fn add_car(&mut self, car: TrainCar) {
-        self.cars.push(car);
+        self.cars.insert(car.id, car);
     }
 
     /// Move a car identified by its `car_id` from the yard into a train.
@@ -228,8 +229,7 @@ impl Railyard {
     /// into `train.cars`.  This avoids double-moving the same `TrainCar` value
     /// (which is what caused the compiler errors you saw earlier).
     fn couple_by_id(&mut self, train: &mut Train, car_id: u32) {
-        if let Some(pos) = self.cars.iter().position(|c| c.id == car_id) {
-            let car = self.cars.remove(pos);
+        if let Some(car) = self.cars.remove(&car_id) {
             train.cars.push(car);
             println!(
                 "Coupled Car {} to Train {} and removed it from the railyard.",
@@ -244,7 +244,7 @@ impl Railyard {
     fn decouple_by_id(&mut self, train: &mut Train, car_id: u32) {
         if let Some(pos) = train.cars.iter().position(|c| c.id == car_id) {
             let car = train.cars.remove(pos);
-            self.cars.push(car);
+            self.cars.insert(car.id, car);
             println!(
                 "Decoupled Car {} from Train {} and added it to the railyard.",
                 car_id,
@@ -255,6 +255,7 @@ impl Railyard {
         }
     }
 
+    /*
     fn couple(&mut self, train: &mut Train, car: TrainCar) {
         // Logic to couple a car to a train
         // For example, we could add the car to the train's list of cars and remove it from the railyard's list of cars
@@ -266,13 +267,14 @@ impl Railyard {
             println!("Car {} is not available in the railyard.", car.id);
         }
     }
+*/
 
     fn decouple(&mut self, train:  &mut Train, car: &mut TrainCar) {
         // Logic to decouple a car from a train
         // For example, we could remove the car from the train's list of cars and add it to the railyard's list of cars
         if let Some(pos) = train.cars.iter().position(|c| c.id == car.id) {
             let removed_car = train.cars.remove(pos);
-            self.cars.push(removed_car);
+            self.cars.insert(removed_car.id, removed_car);
             println!("Decoupled Car {} from Train {} and added it to the railyard.", car.id, train.id);
         } else {
             println!("Car {} is not attached to Train {}.", car.id, train.id);
@@ -293,7 +295,7 @@ impl Railyard {
             }
         }
     }
-
+/* 
     pub fn service_train(&mut self, mut train: Train) -> Train {
         println!("Servicing Train {}...", train.id);
         train.rehabilitate();
@@ -315,7 +317,7 @@ impl Railyard {
         train.cars = ok_cars;
         train
     }
-        
+        */
 }   
 
 
@@ -335,16 +337,16 @@ fn main() {
 
 let mut yard: Railyard = Railyard {
     trains: Vec::new(),
-    cars: Vec::new(),
+    cars: HashMap::new(),
     //cargo: Vec::new(),
 };
 
-let cargo1 = Cargo { item: String::from("bananas"), weight: 100.0, contains_contraband: false };
-let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 50.0, contains_contraband: true };
-let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 200.0, contains_contraband: false };
-let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 150.0, contains_contraband: false };
-let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75.0, contains_contraband: true };
-let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 300.0, contains_contraband: false };
+let cargo1 = Cargo { item: String::from("bananas"), weight: 1000, contains_contraband: false };
+let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 5, contains_contraband: true };
+let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 2000, contains_contraband: false };
+let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 1500, contains_contraband: false };
+let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75, contains_contraband: true };
+let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 3000, contains_contraband: false };
 
 
 let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
@@ -374,7 +376,7 @@ yard.couple_by_id(&mut the_line, 3);
 yard.couple_by_id(&mut the_line, 4);
 
 
-the_line = yard.service_train(the_line);
+//the_line = yard.service_train(the_line);
 
 the_line.dispatch().map(|ok_cars| {
     let ok_car_ids: String = ok_cars.iter()
@@ -385,7 +387,7 @@ the_line.dispatch().map(|ok_cars| {
 }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
 
-println!("The total cargo weight on train {} is {} tons.", the_line.id, the_line.calculate_cargo_weight());
+println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
 
 
 }
