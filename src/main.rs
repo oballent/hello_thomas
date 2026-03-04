@@ -310,13 +310,14 @@ impl Railyard {
 
 
 
-/* 
+
     pub fn service_train(&mut self, mut train: Train) -> Train {
         println!("Servicing Train {}...", train.id);
         train.rehabilitate();
         train.refuel();
         
         let mut ok_cars: Vec<TrainCar> = Vec::new();
+
         for car in train.cars.drain(..) {
             match car.prepare_for_departure() {
                 Ok(msg) => {
@@ -325,14 +326,16 @@ impl Railyard {
                 }
                 Err(e) => {
                     println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
-                    self.cars.push(car);
+                    self.cars.insert(car.id, car);
                 }
             }
         }
         train.cars = ok_cars;
         train
     }
-        */
+        
+
+        
 }   
 
 
@@ -405,7 +408,19 @@ fn main() {
     println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
 
 
-    yard.decouple_by_id(&mut the_line, 2);
+    yard.decouple_by_id(&mut the_line, 1);
+
+    the_line.dispatch().map(|ok_cars| {
+        let ok_car_ids: String = ok_cars.iter()
+            .map(|car| car.id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+
+    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+
+    the_line = yard.service_train(the_line);
 
     the_line.dispatch().map(|ok_cars| {
         let ok_car_ids: String = ok_cars.iter()
