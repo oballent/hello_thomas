@@ -228,16 +228,17 @@ impl Railyard {
     /// Takes ownership of the car by removing it from `self.cars` and pushing it
     /// into `train.cars`.  This avoids double-moving the same `TrainCar` value
     /// (which is what caused the compiler errors you saw earlier).
-    fn couple_by_id(&mut self, train: &mut Train, car_id: u32) {
-        if let Some(car) = self.cars.remove(&car_id) {
+    
+    pub fn couple_by_id(&mut self, train: &mut Train, id: u32) {
+        // 1. Look into the 'Locker Room' (HashMap) and try to remove the car
+        // 2. We use &id because .remove() only needs to "look" at the key
+        if let Some(car) = self.cars.remove(&id) {
+            println!("RailYard: Coupling Car {} to Train {}.", id, train.id);
+            
+            // 3. Physically move that car into the Train's linear track (Vec)
             train.cars.push(car);
-            println!(
-                "Coupled Car {} to Train {} and removed it from the railyard.",
-                car_id,
-                train.id
-            );
         } else {
-            println!("Car {} is not available in the railyard.", car_id);
+            println!("RailYard Error: Car {} not found in the yard!", id);
         }
     }
 
