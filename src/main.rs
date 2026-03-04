@@ -47,7 +47,7 @@ enum TrainError {
     EngineOverheat,
     DieselInTheStation,
     LowFuel,
-    ContrabandOnBoard,
+    ContrabandOnBoard(String),
     NoCargoOrPassengers,
 }
 
@@ -60,7 +60,7 @@ impl Cargo {
             false => match &self.contraband {
                 Some(item) => {
                     println!("Contraband found on cargo '{}'!", item);
-                    Err(TrainError::ContrabandOnBoard)
+                    Err(TrainError::ContrabandOnBoard(format!("Contraband detected: {}!", item)))
                 },
                 None => Ok(format!("Cargo '{}' has a weight discrepancy but no contraband detected.", self.item)),
             }
