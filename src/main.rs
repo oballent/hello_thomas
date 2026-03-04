@@ -242,19 +242,22 @@ impl Railyard {
         }
     }
 
-    fn decouple_by_id(&mut self, train: &mut Train, car_id: u32) {
-        if let Some(pos) = train.cars.iter().position(|c| c.id == car_id) {
+    pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
+        if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
             self.cars.insert(car.id, car);
             println!(
-                "Decoupled Car {} from Train {} and added it to the railyard.",
-                car_id,
+                "Decoupled Car {}, from position {} in Train {} and added it to the railyard.",
+                id,
+                pos,
                 train.id
             );
         } else {
-            println!("Car {} is not attached to Train {}.", car_id, train.id);
+            println!("Car {} is not attached to Train {}.", id, train.id);
         }
     }
+
+
 
     /*
     fn couple(&mut self, train: &mut Train, car: TrainCar) {
@@ -270,6 +273,9 @@ impl Railyard {
     }
 */
 
+
+
+/*
     fn decouple(&mut self, train:  &mut Train, car: &mut TrainCar) {
         // Logic to decouple a car from a train
         // For example, we could remove the car from the train's list of cars and add it to the railyard's list of cars
@@ -281,12 +287,17 @@ impl Railyard {
             println!("Car {} is not attached to Train {}.", car.id, train.id);
         }
     }
+*/
+
+
 
 /*
     fn add_cargo(&mut self, cargo: Cargo) {
         self.cargo.push(cargo);
     }
 */
+
+
 
      fn dispatch_trains(&self) {
         for train in &self.trains {
@@ -296,6 +307,9 @@ impl Railyard {
             }
         }
     }
+
+
+
 /* 
     pub fn service_train(&mut self, mut train: Train) -> Train {
         println!("Servicing Train {}...", train.id);
@@ -330,67 +344,78 @@ impl Railyard {
 fn main() {
 
 
-//let mut the_line: Vec<TrainCar> = Vec::new();
-/*let mut the_line: Train = Train {
-    id: 1,
-    cars: Vec::<TrainCar>::new(),
-};*/
+    //let mut the_line: Vec<TrainCar> = Vec::new();
+    /*let mut the_line: Train = Train {
+        id: 1,
+        cars: Vec::<TrainCar>::new(),
+    };*/
 
-let mut yard: Railyard = Railyard {
-    trains: Vec::new(),
-    cars: HashMap::new(),
-    //cargo: Vec::new(),
-};
+    let mut yard: Railyard = Railyard {
+        trains: Vec::new(),
+        cars: HashMap::new(),
+        //cargo: Vec::new(),
+    };
 
-let cargo1 = Cargo { item: String::from("bananas"), weight: 1000, contains_contraband: false };
-let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 5, contains_contraband: true };
-let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 2000, contains_contraband: false };
-let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 1500, contains_contraband: false };
-let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75, contains_contraband: true };
-let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 3000, contains_contraband: false };
-
-
-let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
-let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
-let boxcar = TrainCar { id:3, cargo: Some(cargo5), passenger: None,};
-let caboose = TrainCar { id:4, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
-
-let mut the_line = Train {
-    id: 1,
-    engine: EngineType::Diesel,
-    fuel_level: FuelLevel::Low,
-    //cars: vec![carriage, dining_car, boxcar, caboose],
-    cars: Vec::new(),
-};
-
-yard.add_car(carriage);
-yard.add_car(dining_car);
-yard.add_car(boxcar);
-yard.add_car(caboose);
+    let cargo1 = Cargo { item: String::from("bananas"), weight: 1000, contains_contraband: false };
+    let cargo2 = Cargo { item: String::from("mysterious briefcase"), weight: 5, contains_contraband: true };
+    let cargo3 = Cargo { item: String::from("boxes of widgets"), weight: 2000, contains_contraband: false };
+    let cargo4 = Cargo { item: String::from("crates of oranges"), weight: 1500, contains_contraband: false };
+    let cargo5 = Cargo { item: String::from("suspicious package"), weight: 75, contains_contraband: true };
+    let cargo6 = Cargo { item: String::from("pallets of electronics"), weight: 3000, contains_contraband: false };
 
 
-// transfer cars from the yard into the_line by identifier; the local vars have
-// already been moved into the yard, so we can't use them again.
-yard.couple_by_id(&mut the_line, 1);
-yard.couple_by_id(&mut the_line, 2);
-yard.couple_by_id(&mut the_line, 3);
-yard.couple_by_id(&mut the_line, 4);
+    let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
+    let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
+    let boxcar = TrainCar { id:3, cargo: Some(cargo5), passenger: None,};
+    let caboose = TrainCar { id:4, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
+
+    let mut the_line = Train {
+        id: 1,
+        engine: EngineType::Diesel,
+        fuel_level: FuelLevel::Low,
+        //cars: vec![carriage, dining_car, boxcar, caboose],
+        cars: Vec::new(),
+    };
+
+    yard.add_car(carriage);
+    yard.add_car(dining_car);
+    yard.add_car(boxcar);
+    yard.add_car(caboose);
 
 
-//the_line = yard.service_train(the_line);
-
-the_line.dispatch().map(|ok_cars| {
-    let ok_car_ids: String = ok_cars.iter()
-        .map(|car| car.id.to_string())
-        .collect::<Vec<String>>()
-        .join(", ");
-    println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-}).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+    // transfer cars from the yard into the_line by identifier; the local vars have
+    // already been moved into the yard, so we can't use them again.
+    yard.couple_by_id(&mut the_line, 1);
+    yard.couple_by_id(&mut the_line, 2);
+    yard.couple_by_id(&mut the_line, 3);
+    yard.couple_by_id(&mut the_line, 4);
 
 
-println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+    //the_line = yard.service_train(the_line);
+
+    the_line.dispatch().map(|ok_cars| {
+        let ok_car_ids: String = ok_cars.iter()
+            .map(|car| car.id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
 
+    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+
+
+    yard.decouple_by_id(&mut the_line, 2);
+
+    the_line.dispatch().map(|ok_cars| {
+        let ok_car_ids: String = ok_cars.iter()
+            .map(|car| car.id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+
+    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
 }
 
 
