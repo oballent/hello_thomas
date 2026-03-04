@@ -57,7 +57,13 @@ impl Cargo {
     fn check_contraband(&self) -> Result<String, TrainError> {
         match self.manifest_weight == self.actual_weight{
             true => Ok(format!("Cargo '{}' is clear of contraband.", self.item)),
-            false => Err(TrainError::ContrabandOnBoard),
+            false => match &self.contraband {
+                Some(item) => {
+                    println!("Contraband found on cargo '{}'!", item);
+                    Err(TrainError::ContrabandOnBoard)
+                },
+                None => Ok(format!("Cargo '{}' has a weight discrepancy but no contraband detected.", self.item)),
+            }
         }
     }
 }
@@ -364,7 +370,7 @@ fn main() {
 
     let cargo1 = Cargo { item: String::from("bananas"), manifest_weight: 1000, actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), manifest_weight: 1000, actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
-    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 9001, contraband: Some(String::from("Service Weapon")) };
+    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 9001, contraband: Some(String::from("The Service Weapon")) };
     let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), manifest_weight: 1500, actual_weight: 1500, contraband: None };
     let cargo5 = Cargo { item: String::from("Scrap Metal"), manifest_weight: 10000, actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
     let cargo6 = Cargo { item: String::from("pallets of electronics"), manifest_weight: 3000, actual_weight: 3000, contraband: None };
@@ -373,9 +379,9 @@ fn main() {
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
     let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
-    let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Artyom")),};
+    let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
     let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),};
-    let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Tangerine"))};
+    let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
     let mut the_line = Train {
         id: 1,
@@ -417,7 +423,7 @@ fn main() {
     println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
 
 
-    yard.decouple_by_id(&mut the_line, 1);
+    //yard.decouple_by_id(&mut the_line, 1);
 
     the_line.dispatch().map(|ok_cars| {
         let ok_car_ids: String = ok_cars.iter()
