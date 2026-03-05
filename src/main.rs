@@ -413,12 +413,12 @@ fn main() {
 
 
 
-    yard.add_car(carriage);
-    yard.add_car(dining_car);
-    yard.add_car(boxcar1);
-    yard.add_car(boxcar2);
-    yard.add_car(boxcar3);
-    yard.add_car(caboose);
+    yard.receive_car(carriage);
+    yard.receive_car(dining_car);
+    yard.receive_car(boxcar1);
+    yard.receive_car(boxcar2);
+    yard.receive_car(boxcar3);
+    yard.receive_car(caboose);
 
 
     if let Some(mut the_line) = yard.trains.pop() { // Take ownership of the train from the yard
