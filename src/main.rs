@@ -49,6 +49,7 @@ enum TrainError {
     LowFuel,
     ContrabandOnBoard(String),
     NoCargoOrPassengers,
+    DuplicateId(u32),
 }
 
 
@@ -228,9 +229,26 @@ impl Railyard {
         self.trains.push(train);
     }
 
+
+    
     fn add_car(&mut self, car: TrainCar) {
         self.cars.insert(car.id, car);
     }
+
+    
+    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), TrainError> {
+        // Check if the locker is already taken
+        if self.cars.contains_key(&car.id) {
+            // If it is, we return the car in an error so it isn't destroyed!
+            println!("CRITICAL: Locker {} is already occupied!", car.id);
+            return Err(TrainError::DuplicateId(car.id)); // new error variant DuplicateId
+        }
+        
+        // If the locker is empty, park the car
+        self.add_car(car);
+        Ok(())
+    }
+    
 
     /// Move a car identified by its `car_id` from the yard into a train.
     ///
@@ -391,6 +409,10 @@ fn main() {
         cars: Vec::new(),
     };
 
+    yard.house(the_line);
+
+
+
     yard.add_car(carriage);
     yard.add_car(dining_car);
     yard.add_car(boxcar1);
@@ -399,53 +421,63 @@ fn main() {
     yard.add_car(caboose);
 
 
-    // transfer cars from the yard into the_line by identifier; the local vars have
-    // already been moved into the yard, so we can't use them again.
-    yard.couple_by_id(&mut the_line, 1);
-    yard.couple_by_id(&mut the_line, 2);
-    yard.couple_by_id(&mut the_line, 3);
-    yard.couple_by_id(&mut the_line, 4);
-    yard.couple_by_id(&mut the_line, 5);
-    yard.couple_by_id(&mut the_line, 6);
+    if let Some(mut the_line) = yard.trains.pop() { // Take ownership of the train from the yard
+
+        
+        // transfer cars from the yard into the_line by identifier; the local vars have
+        // already been moved into the yard, so we can't use them again.
+        yard.couple_by_id(&mut the_line, 1);
+        yard.couple_by_id(&mut the_line, 2);
+        yard.couple_by_id(&mut the_line, 3);
+        yard.couple_by_id(&mut the_line, 4);
+        yard.couple_by_id(&mut the_line, 5);
+        yard.couple_by_id(&mut the_line, 6);
 
 
-    //the_line = yard.service_train(the_line);
+        the_line.dispatch().map(|ok_cars| {
+            let ok_car_ids: String = ok_cars.iter()
+                .map(|car| car.id.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+            println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+        }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
-    the_line.dispatch().map(|ok_cars| {
-        let ok_car_ids: String = ok_cars.iter()
-            .map(|car| car.id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
-
-
-    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        
+        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
 
 
-    //yard.decouple_by_id(&mut the_line, 1);
+            
+        /*
+        yard.decouple_by_id(&mut the_line, 1);
 
-    the_line.dispatch().map(|ok_cars| {
-        let ok_car_ids: String = ok_cars.iter()
-            .map(|car| car.id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+        the_line.dispatch().map(|ok_cars| {
+            let ok_car_ids: String = ok_cars.iter()
+                .map(|car| car.id.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+            println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+        }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
-    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        */
 
-    the_line = yard.service_train(the_line);
 
-    the_line.dispatch().map(|ok_cars| {
-        let ok_car_ids: String = ok_cars.iter()
-            .map(|car| car.id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-    }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+        the_line = yard.service_train(the_line);
 
-    println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        the_line.dispatch().map(|ok_cars| {
+            let ok_car_ids: String = ok_cars.iter()
+                .map(|car| car.id.to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+            println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+        }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+
+        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+            
+
+    }
+
+
 }
 
 
