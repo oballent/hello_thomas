@@ -254,7 +254,7 @@ impl Railyard {
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
-            self.cars.insert(car.id, car);
+            self.add_car(car);
             println!(
                 "Decoupled Car {}, from position {} in Train {} and added it to the railyard.",
                 id,
