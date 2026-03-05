@@ -272,7 +272,7 @@ impl Railyard {
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
-            self.add_car(car);
+            if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
             println!(
                 "Decoupled Car {}, from position {} in Train {} and added it to the railyard.",
                 id,
@@ -353,7 +353,7 @@ impl Railyard {
                 }
                 Err(e) => {
                     println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
-                    self.cars.insert(car.id, car);
+                    if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
                 }
             }
         }
@@ -388,7 +388,7 @@ fn main() {
 
     let cargo1 = Cargo { item: String::from("bananas"), manifest_weight: 1000, actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), manifest_weight: 1000, actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
-    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 9001, contraband: Some(String::from("The Service Weapon")) };
+    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
     let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), manifest_weight: 1500, actual_weight: 1500, contraband: None };
     let cargo5 = Cargo { item: String::from("Scrap Metal"), manifest_weight: 10000, actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
     let cargo6 = Cargo { item: String::from("pallets of electronics"), manifest_weight: 3000, actual_weight: 3000, contraband: None };
@@ -413,12 +413,12 @@ fn main() {
 
 
 
-    yard.receive_car(carriage);
-    yard.receive_car(dining_car);
-    yard.receive_car(boxcar1);
-    yard.receive_car(boxcar2);
-    yard.receive_car(boxcar3);
-    yard.receive_car(caboose);
+    if let Err(e) = yard.receive_car(carriage) { println!("..."); }
+    yard.receive_car(dining_car).ok();
+    yard.receive_car(boxcar1).ok();
+    yard.receive_car(boxcar2).ok();
+    yard.receive_car(boxcar3).ok();
+    yard.receive_car(caboose).ok();
 
 
     if let Some(mut the_line) = yard.trains.pop() { // Take ownership of the train from the yard
