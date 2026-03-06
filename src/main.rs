@@ -217,6 +217,7 @@ struct Railyard {
 
 impl Railyard {
     
+
     fn new() -> Self {
         Railyard {
             trains: Vec::new(),
@@ -226,6 +227,60 @@ impl Railyard {
         }
     }
     
+
+    pub fn print_report(&self) {
+        println!("\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
+        println!("┃              SODOR RAILWAY: YARD REPORT               ┃");
+        println!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+
+        // 1. THE MAIN YARD (The Lockers)
+        println!("  MAIN YARD LOCKERS ({}/{} capacity used)", self.cars.len(), 100); // We can make capacity a real variable later
+        if self.cars.is_empty() {
+            println!("    (No cars currently parked)");
+        } else {
+            for (id, car) in &self.cars {
+                let cargo_desc = match &car.cargo {
+                    Some(c) => format!("{} ({}kg)", c.item, c.actual_weight),
+                    None => "Empty".to_string(),
+                };
+                let pax = car.passenger.as_deref().unwrap_or("None");
+                println!("    [ID: {:02}] | Pax: {:<10} | Cargo: {}", id, pax, cargo_desc);
+            }
+        }
+
+        // 2. THE PURGATORY (The Stray Track)
+        println!("\n  PURGATORY SIDING (Stray/Invalid Cars)");
+        if self.purgatory.is_empty() {
+            println!("    (Clear - All cars accounted for)");
+        } else {
+            for car in &self.purgatory {
+                println!("    ⚠️ [ID: {:02}] | REJECTED | Pax: {}", car.id, car.passenger.as_deref().unwrap_or("Unknown"));
+            }
+        }
+
+        // 3. THE ROUNDHOUSE (Coming Soon)
+        println!("\n  ROUNDHOUSE (Engines)");
+        println!("    [ TODO: Implement Engine Sorting ]");
+        
+        println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
     fn house(&mut self, train: Train) {
@@ -238,7 +293,7 @@ impl Railyard {
         self.cars.insert(car.id, car);
     }
 
-    
+    /*
     pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
         // Check if the locker is already taken
         match self.cars.contains_key(&car.id) {
@@ -254,7 +309,24 @@ impl Railyard {
             }
         }
     }
-    
+    */
+
+
+    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
+        if self.cars.contains_key(&car.id) {
+            println!("Railyard Error: Car ID {} already exists in the yard!", car.id);
+            let id = car.id;
+            return Err((car, TrainError::DuplicateId(id)));
+        }
+        println!("Railyard: Received Car {} into the yard.", car.id);
+        self.cars.insert(car.id, car);
+        Ok(())
+}
+
+
+
+
+
 
     /// Move a car identified by its `car_id` from the yard into a train.
     ///
@@ -471,17 +543,17 @@ fn main() {
         yard.couple_by_id(&mut the_line, 6);
 
 
-        the_line.dispatch().map(|ok_cars| {
-            let ok_car_ids: String = ok_cars.iter()
-                .map(|car| car.id.to_string())
-                .collect::<Vec<String>>()
-                .join(", ");
-            println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-        }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+        the_line.dispatch();//.map(|ok_cars| {
+        //     let ok_car_ids: String = ok_cars.iter()
+        //         .map(|car| car.id.to_string())
+        //         .collect::<Vec<String>>()
+        //         .join(", ");
+        //     println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+        // }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
         
-        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
-
+        //println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        yard.print_report();
 
             
         /*
@@ -501,17 +573,20 @@ fn main() {
 
         the_line = yard.service_train(the_line);
 
-        the_line.dispatch().map(|ok_cars| {
-            let ok_car_ids: String = ok_cars.iter()
-                .map(|car| car.id.to_string())
-                .collect::<Vec<String>>()
-                .join(", ");
-            println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
-        }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
+        the_line.dispatch();//.map(|ok_cars| {
+        //     let ok_car_ids: String = ok_cars.iter()
+        //         .map(|car| car.id.to_string())
+        //         .collect::<Vec<String>>()
+        //         .join(", ");
+        //     println!("Train {} has {} cars ready for departure! Car(s): [{}]", the_line.id, ok_cars.len(), ok_car_ids);
+        // }).unwrap_or_else(|e| println!("Error dispatching the train: {:?}", e));
 
-        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
+        //println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
             
-        println!("Purgatory contains {} cars: {:?}", yard.purgatory.len(), yard.purgatory.iter().map(|car| car.id).collect::<Vec<u32>>());
+        //println!("Purgatory contains {} cars: {:?}", yard.purgatory.len(), yard.purgatory.iter().map(|car| car.id).collect::<Vec<u32>>());
+    
+        yard.print_report();
+    
     }
 
 
