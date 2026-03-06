@@ -210,7 +210,9 @@ impl Train {
 struct Railyard {
     trains: Vec<Train>,
     cars: HashMap<u32, TrainCar>,
+    purgatory: Vec<TrainCar>
     //cargo: Vec<Cargo>,
+
 }
 
 impl Railyard {
@@ -218,6 +220,7 @@ impl Railyard {
     fn new() -> Self {
         Railyard {
             trains: Vec::new(),
+            purgatory: Vec::new(),
             cars: HashMap::new(),
             //cargo: Vec::new(),
         }
@@ -236,17 +239,20 @@ impl Railyard {
     }
 
     
-    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), TrainError> {
+    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
         // Check if the locker is already taken
-        if self.cars.contains_key(&car.id) {
-            // If it is, we return the car in an error so it isn't destroyed!
-            println!("CRITICAL: Locker {} is already occupied!", car.id);
-            return Err(TrainError::DuplicateId(car.id)); // new error variant DuplicateId
+        match self.cars.contains_key(&car.id) {
+            true => {
+                println!("Railyard Error: Car ID {} already exists in the yard!", car.id);
+                let id = car.id;
+                Err((car, TrainError::DuplicateId(id)))
+            },
+            false => {
+                println!("Railyard: Received Car {} into the yard.", car.id);
+                self.cars.insert(car.id, car);
+                Ok(())
+            }
         }
-        
-        // If the locker is empty, park the car
-        self.add_car(car);
-        Ok(())
     }
     
 
@@ -272,13 +278,21 @@ impl Railyard {
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
+            match self.receive_car(car) {
+                Ok(_) => println!("Car {} successfully received back into the yard.", id),
+                Err((car, e)) => {
+                    println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", id, e);
+                    self.purgatory.push(car);
+                }
+            }
+            /* 
             if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
             println!(
                 "Decoupled Car {}, from position {} in Train {} and added it to the railyard.",
                 id,
                 pos,
                 train.id
-            );
+            );*/
         } else {
             println!("Car {} is not attached to Train {}.", id, train.id);
         }
@@ -353,7 +367,19 @@ impl Railyard {
                 }
                 Err(e) => {
                     println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
-                    if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
+
+                    // 1. Take a "Snapshot" of the ID before the car is moved.
+                    // This is common in Rust: Copy the cheap data (u32), move the heavy data (Struct).
+                    let car_id = car.id;
+                    match self.receive_car(car) {
+                        Ok(_) => println!("Car {} successfully received into the yard.", car_id),
+                        Err((car, e)) => {
+                            println!("Error receiving Car {} into the yard: {:?}. Placing in purgatory.", car.id, e);
+                            self.purgatory.push(car);
+                        }
+                    }
+                    
+                    //if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
                 }
             }
         }
@@ -383,6 +409,7 @@ fn main() {
     let mut yard: Railyard = Railyard {
         trains: Vec::new(),
         cars: HashMap::new(),
+        purgatory: Vec::new(),
         //cargo: Vec::new(),
     };
 
@@ -392,6 +419,7 @@ fn main() {
     let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), manifest_weight: 1500, actual_weight: 1500, contraband: None };
     let cargo5 = Cargo { item: String::from("Scrap Metal"), manifest_weight: 10000, actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
     let cargo6 = Cargo { item: String::from("pallets of electronics"), manifest_weight: 3000, actual_weight: 3000, contraband: None };
+    let cargo7 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
 
 
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
@@ -399,6 +427,7 @@ fn main() {
     let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
     let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
     let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),};
+    let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Faden")),};
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
     let mut the_line = Train {
@@ -418,6 +447,14 @@ fn main() {
     yard.receive_car(boxcar1).ok();
     yard.receive_car(boxcar2).ok();
     yard.receive_car(boxcar3).ok();
+    let bc4_id = boxcar4.id;
+    match yard.receive_car(boxcar4) {
+                Ok(_) => println!("Car {} successfully received back into the yard.", bc4_id),
+                Err((car, e)) => {
+                    println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", bc4_id, e);
+                    yard.purgatory.push(car);
+                }
+            }
     yard.receive_car(caboose).ok();
 
 
@@ -474,7 +511,7 @@ fn main() {
 
         println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
             
-
+        println!("Purgatory contains {} cars: {:?}", yard.purgatory.len(), yard.purgatory.iter().map(|car| car.id).collect::<Vec<u32>>());
     }
 
 
