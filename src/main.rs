@@ -1,6 +1,13 @@
 use std::clone;
 use std::collections::HashMap;
 
+const RESET: &str = "\x1b[0m";
+const RED: &str = "\x1b[31m";
+const GREEN: &str = "\x1b[32m";
+const YELLOW: &str = "\x1b[33m";
+const CYAN: &str = "\x1b[36m";
+const BOLD: &str = "\x1b[1m";
+
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 
 
@@ -229,12 +236,12 @@ impl Railyard {
     
 
     pub fn print_report(&self) {
-        println!("\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓");
-        println!("┃              SODOR RAILWAY: YARD REPORT               ┃");
-        println!("┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛");
+        println!("\n{BOLD}{CYAN}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓{RESET}");
+        println!("{BOLD}{CYAN}┃              SODOR RAILWAY: YARD REPORT               ┃{RESET}");
+        println!("{BOLD}{CYAN}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛{RESET}");
 
         // 1. THE MAIN YARD (The Lockers)
-        println!("  MAIN YARD LOCKERS ({}/{} capacity used)", self.cars.len(), 100); // We can make capacity a real variable later
+        println!("  {BOLD}MAIN YARD LOCKERS ({}/{} capacity used){RESET}", self.cars.len(), 100); // We can make capacity a real variable later
         if self.cars.is_empty() {
             println!("    (No cars currently parked)");
         } else {
@@ -244,17 +251,17 @@ impl Railyard {
                     None => "Empty".to_string(),
                 };
                 let pax = car.passenger.as_deref().unwrap_or("None");
-                println!("    [ID: {:02}] | Pax: {:<10} | Cargo: {}", id, pax, cargo_desc);
+                println!("    {GREEN}[ID: {:02}]{RESET} | Pax: {:<10} | Cargo: {}", id, pax, cargo_desc);
             }
         }
 
         // 2. THE PURGATORY (The Stray Track)
-        println!("\n  PURGATORY SIDING (Stray/Invalid Cars)");
+        println!("\n  {BOLD}{RED}PURGATORY SIDING (Stray/Invalid Cars){RESET}");
         if self.purgatory.is_empty() {
             println!("    (Clear - All cars accounted for)");
         } else {
             for car in &self.purgatory {
-                println!("    ⚠️ [ID: {:02}] | REJECTED | Pax: {}", car.id, car.passenger.as_deref().unwrap_or("Unknown"));
+                println!("    {RED}⚠️ [ID: {:02}] | REJECTED | Pax: {} | Check Manifest immediately!{RESET}", car.id, car.passenger.as_deref().unwrap_or("Unknown"));
             }
         }
 
