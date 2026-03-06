@@ -19,7 +19,7 @@ struct Cargo{
     contraband: Option<String>,
 }
 
-
+#[derive(Debug)]
 struct TrainCar {
     id: u32,
     cargo: Option<Cargo>,
@@ -138,8 +138,8 @@ impl Train {
 
     fn check_fuel(&self) -> Result<String, TrainError> {
         match self.fuel_level {
-            FuelLevel::Low => Err(TrainError::LowFuel),
-            _ => Ok(String::from("Fuel level is sufficient!")),
+            FuelLevel::Full=> Ok(String::from("Fuel level is sufficient!")),
+            _ => Err(TrainError::LowFuel),
         }
     }
 
@@ -163,6 +163,28 @@ impl Train {
          
          Ok(format!("Departure Status: {}, Fuel Status: {:?}", engine_status, fuel_status))
     }
+
+
+
+    pub fn purge_rejected_cars(&mut self) -> Vec<TrainCar> {
+    let mut rejected_cars = Vec::new();
+    let mut good_cars = Vec::new();
+
+    // The Train surgically removes its own cars
+    for car in self.cars.drain(..) {
+        if car.prepare_for_departure().is_ok() {
+            good_cars.push(car);
+        } else {
+            rejected_cars.push(car);
+        }
+    }
+
+    // Re-assign the good cars to the train
+    self.cars = good_cars;
+
+    // Hand the duds back to the caller
+    rejected_cars
+}
 
     fn dispatch(&self) -> Result<Vec<&TrainCar>, TrainError> {
         
@@ -291,12 +313,14 @@ impl Railyard {
 
 
     fn house(&mut self, train: Train) {
+        //println!("\n\n  house called with Train ID {}. Adding to the yard...", train.id);
         self.trains.push(train);
     }
 
 
     
     fn add_car(&mut self, car: TrainCar) {
+        //println!("\n\n  add_car called with Car ID {}. Adding to the yard without duplicate check...", car.id);
         self.cars.insert(car.id, car);
     }
 
@@ -320,6 +344,7 @@ impl Railyard {
 
 
     pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
+        println!("\n\n  receive_car called with Car ID {}. Checking for duplicates...", car.id);
         if self.cars.contains_key(&car.id) {
             println!("Railyard Error: Car ID {} already exists in the yard!", car.id);
             let id = car.id;
@@ -357,13 +382,20 @@ impl Railyard {
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
-            match self.receive_car(car) {
-                Ok(_) => println!("Car {} successfully received back into the yard.", id),
-                Err((car, e)) => {
-                    println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", id, e);
-                    self.purgatory.push(car);
-                }
-            }
+
+            if let Err((car, e)) = self.receive_car(car) {
+                println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", id, e);
+                self.purgatory.push(car);
+            } 
+
+            // match self.receive_car(car) {
+            //     Ok(_) => println!("Car {} successfully received back into the yard.", id),
+            //     Err((car, e)) => {
+            //         println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", id, e);
+            //         self.purgatory.push(car);
+            //     }
+            // }
+
             /* 
             if let Err(e) = self.receive_car(car) { println!("..."); }//self.receive_car(car);
             println!(
@@ -430,7 +462,7 @@ impl Railyard {
 
 
 
-
+/*
     pub fn service_train(&mut self, mut train: Train) -> Train {
         println!("Servicing Train {}...", train.id);
         train.rehabilitate();
@@ -465,7 +497,26 @@ impl Railyard {
         train.cars = ok_cars;
         train
     }
+        */
+
+
+
+    pub fn service_train(&mut self, mut train: Train) -> Train {
+        println!("RailYard: Servicing Train {}...", train.id);
         
+        train.rehabilitate();
+        train.refuel();
+
+        // The Train handles its own mess
+        let duds = train.purge_rejected_cars();
+
+        for dud in duds {
+            // We use the Snapshot logic inside receive_car or here
+            let _ = self.receive_car(dud); 
+        }
+
+        train
+    }
 
         
 }   
@@ -519,22 +570,52 @@ fn main() {
 
     yard.house(the_line);
 
+    if let Err((homeless_car, error)) = yard.receive_car(carriage) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        
+        // Now you have full ownership of 'homeless_car' again!
+        // You can shove it into purgatory manually:
+        yard.purgatory.push(homeless_car);
+    }
 
+    //let dc_id = dining_car.id;
+    if let Err((homeless_car, error)) = yard.receive_car(dining_car) { 
+        println!("Error receiving Car {} into the yard: {:?}. Placing in purgatory.", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
 
-    if let Err(e) = yard.receive_car(carriage) { println!("..."); }
-    yard.receive_car(dining_car).ok();
-    yard.receive_car(boxcar1).ok();
-    yard.receive_car(boxcar2).ok();
-    yard.receive_car(boxcar3).ok();
+    //let bc1_id = boxcar1.id;
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar1) { 
+        println!("Error receiving Car {} into the yard: {:?}. Placing in purgatory.", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+
+    //let bc2_id = boxcar2.id;
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar2) { 
+        println!("Error receiving Car {} into the yard: {:?}. Placing in purgatory.", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+
+    let bc3_id = boxcar3.id;
+    if let Err(e) = yard.receive_car(boxcar3) { 
+        println!("Error receiving Car {} into the yard: {:?}. Placing in purgatory.", bc3_id, e);
+        yard.purgatory.push(e.0);
+    }
+
     let bc4_id = boxcar4.id;
     match yard.receive_car(boxcar4) {
-                Ok(_) => println!("Car {} successfully received back into the yard.", bc4_id),
-                Err((car, e)) => {
-                    println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", bc4_id, e);
-                    yard.purgatory.push(car);
-                }
-            }
-    yard.receive_car(caboose).ok();
+        Ok(_) => println!("Car {} successfully received back into the yard.", bc4_id),
+        Err((car, e)) => {
+            println!("Error receiving Car {} back into the yard: {:?}. Placing in purgatory.", bc4_id, e);
+            yard.purgatory.push(car);
+        }
+    }
+
+    //let caboose_id = caboose.id;
+    if let Err((car, e)) = yard.receive_car(caboose) {
+        println!("Error handling car {}: redirecting to purgatory. Error details if you're curious: {:?}", car.id, e);
+        yard.purgatory.push(car);
+    }
 
 
     if let Some(mut the_line) = yard.trains.pop() { // Take ownership of the train from the yard
@@ -593,6 +674,13 @@ fn main() {
         //println!("Purgatory contains {} cars: {:?}", yard.purgatory.len(), yard.purgatory.iter().map(|car| car.id).collect::<Vec<u32>>());
     
         yard.print_report();
+
+        yard.decouple_by_id(&mut the_line, 1);
+        yard.decouple_by_id(&mut the_line, 2);
+
+        yard.print_report();
+
+        println!("The total cargo weight on train {} is {} kg.", the_line.id, the_line.calculate_cargo_weight());
     
     }
 
