@@ -1,5 +1,5 @@
 use std::clone;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -19,6 +19,12 @@ struct Cargo{
     contraband: Option<String>,
 }
 
+struct Engine {
+    id: u32,
+    engine_type: EngineType,
+    fuel_level: FuelLevel,
+}
+
 #[derive(Debug)]
 struct TrainCar {
     id: u32,
@@ -29,11 +35,27 @@ struct TrainCar {
 struct Train{
     id: u32,
     cars: Vec<TrainCar>,
-    engine: EngineType,
-    fuel_level: FuelLevel,
+    engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
 }
 
-//#[derive(Clone, Copy)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
+
+
+struct Railyard {
+    trains: Vec<Train>,
+    cars: HashMap<u32, TrainCar>,
+    next_train_id: u32,
+    purgatory: Vec<TrainCar>
+    //cargo: Vec<Cargo>,
+
+}
+
+
+// Assuming EngineType and Engine are defined
+struct Roundhouse {
+    stalls: HashMap<EngineType, VecDeque<Engine>>,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
 enum EngineType {
     Diesel,
     Thomas,
@@ -57,6 +79,7 @@ enum TrainError {
     ContrabandOnBoard(String),
     NoCargoOrPassengers,
     DuplicateId(u32),
+    NoAvailableEngine(EngineType),
 }
 
 
@@ -127,30 +150,39 @@ impl TrainCar {
 }
 
 
+impl Engine {
+    fn rehabilitate(&mut self) {
+        println!("Rehabilitating Engine {}...", self.id);
+        // Logic to rehabilitate the engine, e.g., fixing mechanical issues
+        // For demonstration, we'll just print a message and set fuel level to Full
+        self.fuel_level = FuelLevel::Full;
+        println!("Engine {} has been rehabilitated and refueled!", self.id);
+    }
+
+    fn refuel(&mut self) {
+        println!("Refueling Engine {}...", self.id);
+        // Logic to refuel the engine
+        // For demonstration, we'll just set the fuel level to Full
+        self.fuel_level = FuelLevel::Full;
+        println!("Engine {} is now fully refueled!", self.id);
+    }
+}
+
+
 impl Train {
     
     fn start_engine(&self) -> Result<String, TrainError> {
-        match self.engine {
+        match self.engine.engine_type {
             EngineType::Diesel => Err(TrainError::DieselInTheStation),
             _ => Ok(String::from("The engine starts successfully!")),
         }
     }
 
     fn check_fuel(&self) -> Result<String, TrainError> {
-        match self.fuel_level {
+        match self.engine.fuel_level {
             FuelLevel::Full=> Ok(String::from("Fuel level is sufficient!")),
             _ => Err(TrainError::LowFuel),
         }
-    }
-
-    fn rehabilitate(&mut self) {
-        println!("Rehabilitating the train car's engine...");
-        self.engine = EngineType::Thomas;
-    }
-
-    fn refuel(&mut self) {
-        println!("Refueling the train car...");
-        self.fuel_level = FuelLevel::Full;
     }
 
 
@@ -158,7 +190,7 @@ impl Train {
     fn prepare_for_departure(&self) -> Result<String, TrainError> {
         //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
          let engine_status = self.start_engine()?;
-         // Where does OK(String::from("The train is ready for departure!")) come from? Is it just a way to return a successful result from the function, indicating that the train is ready for departure? Yes, that's correct! The Ok(String::from("The train is ready for departure!")) is a way to return a successful result from the prepare_for_departure() function. It indicates that the engine started successfully and the train is ready for departure. The Ok variant of the Result type is used to represent a successful outcome, while the Err variant is used to represent an error. In this case, if the engine starts successfully, we return an Ok value with a message indicating that the train is ready for departure. If there was an error starting the engine (like if it's a Diesel), we would return an Err value with the appropriate TrainError.
+         
          let fuel_status = self.check_fuel()?;
          
          Ok(format!("Departure Status: {}, Fuel Status: {:?}", engine_status, fuel_status))
@@ -235,25 +267,23 @@ impl Train {
 
 
 
-
-struct Railyard {
-    trains: Vec<Train>,
-    cars: HashMap<u32, TrainCar>,
-    purgatory: Vec<TrainCar>
-    //cargo: Vec<Cargo>,
-
-}
-
 impl Railyard {
     
 
     fn new() -> Self {
         Railyard {
             trains: Vec::new(),
-            purgatory: Vec::new(),
             cars: HashMap::new(),
+            next_train_id: 1,
+            purgatory: Vec::new(),
             //cargo: Vec::new(),
         }
+    }
+
+    fn generate_new_id(&mut self) -> u32 {
+        let id = self.next_train_id;
+        self.next_train_id += 1; // Increment for the next train
+        id
     }
     
 
@@ -451,6 +481,32 @@ impl Railyard {
 
 
 
+
+    pub fn assemble_train(&mut self, roundhouse: &mut Roundhouse, engine_req: EngineType, car_ids: Vec<u32>) -> Result<Train, TrainError> {
+        // 1. Acquire Power
+        let engine = roundhouse.dispatch(engine_req)
+            .ok_or(TrainError::NoAvailableEngine(engine_req))?;
+
+        // 2. Acquire Payload
+        let mut attached_cars = Vec::new();
+        for id in car_ids {
+            if let Some(car) = self.cars.remove(&id) {
+                attached_cars.push(car);
+            }
+        }
+
+        // 3. Create the Assembly (The Train)
+        Ok(Train {
+            id: self.generate_new_id(), // We'll need a way to track these
+            engine,
+            cars: attached_cars,
+        })
+    }
+
+
+
+
+
      fn dispatch_trains(&self) {
         for train in &self.trains {
             match train.dispatch() {
@@ -462,11 +518,11 @@ impl Railyard {
 
 
 
-/*
+
     pub fn service_train(&mut self, mut train: Train) -> Train {
         println!("Servicing Train {}...", train.id);
-        train.rehabilitate();
-        train.refuel();
+        train.engine.rehabilitate();    // At some point, we might want to have different levels of service that do different things to the engine and cars, but for now we'll just do a full rehab and refuel.
+        train.engine.refuel();  // Eventually, we could have different levels of service that do different things to the engine and cars, but for now we'll just do a full rehab and refuel.
         
         let mut ok_cars: Vec<TrainCar> = Vec::new();
 
@@ -497,33 +553,53 @@ impl Railyard {
         train.cars = ok_cars;
         train
     }
-        */
-
-
-
-    pub fn service_train(&mut self, mut train: Train) -> Train {
-        println!("RailYard: Servicing Train {}...", train.id);
         
-        train.rehabilitate();
-        train.refuel();
 
-        // The Train handles its own mess
-        let duds = train.purge_rejected_cars();
 
-        for dud in duds {
-            // We use the Snapshot logic inside receive_car or here
-            let _ = self.receive_car(dud); 
-        }
 
-        train
-    }
+    // pub fn service_train(&mut self, mut train: Train) -> Train {
+    //     println!("RailYard: Servicing Train {}...", train.id);
+        
+    //     train.rehabilitate();
+    //     train.refuel();
+
+    //     // The Train handles its own mess
+    //     let duds = train.purge_rejected_cars();
+
+    //     for dud in duds {
+    //         // We use the Snapshot logic inside receive_car or here
+    //         let _ = self.receive_car(dud); 
+    //     }
+
+    //     train
+    // }
 
         
 }   
 
 
 
+impl Roundhouse {
+    pub fn new() -> Self {
+        Roundhouse {
+            stalls: HashMap::new(),
+        }
+    }
 
+    /// Houses an engine in the appropriate stall based on its type.
+    pub fn house(&mut self, engine: Engine) {
+        self.stalls
+            .entry(engine.engine_type) // 1. Check the stall for this EngineType
+            .or_insert_with(VecDeque::new)  // 2. If it doesn't exist, build a new track (VecDeque)
+            .push_back(engine);             // 3. Park the engine on the track
+    }
+
+    pub fn dispatch(&mut self, etype: EngineType) -> Option<Engine> {
+        self.stalls
+            .get_mut(&etype)? // Find the stall
+            .pop_front()      // Take the one that's been waiting longest
+    }
+}
 
 
 
@@ -539,6 +615,7 @@ fn main() {
     let mut yard: Railyard = Railyard {
         trains: Vec::new(),
         cars: HashMap::new(),
+        next_train_id: 1,
         purgatory: Vec::new(),
         //cargo: Vec::new(),
     };
@@ -560,10 +637,13 @@ fn main() {
     let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Faden")),};
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
+
+    let engine1 = Engine { id: 1, engine_type: EngineType::Diesel, fuel_level: FuelLevel::Low };
+
+
     let mut the_line = Train {
         id: 1,
-        engine: EngineType::Diesel,
-        fuel_level: FuelLevel::Low,
+        engine: engine1,
         //cars: vec![carriage, dining_car, boxcar, caboose],
         cars: Vec::new(),
     };
