@@ -1,4 +1,4 @@
-use std::clone;
+use std::{clone, error};
 use std::collections::{HashMap, VecDeque};
 
 const RESET: &str = "\x1b[0m";
@@ -386,21 +386,33 @@ impl Railyard {
 //         Ok(())
 // }
 
-    pub fn receive_car(&mut self, car: TrainCar){
-        println!("\n\n  receive_car called with Car ID {}. Checking for duplicates...", car.id);
+    // pub fn receive_car(&mut self, car: TrainCar){
+    //     println!("\n\n  receive_car called with Car ID {}. Checking for duplicates...", car.id);
+    //     if self.cars.contains_key(&car.id) {
+    //         println!("Railyard Error: Car ID {} already exists in the yard!", car.id);
+    //         let id = car.id;
+    //         self.purgatory.push(car); // Place the car in purgatory instead of returning it to the caller
+    //         //return Err((car, TrainError::DuplicateId(id)));
+    //     } else {
+    //         println!("Railyard: Received Car {} into the yard.", car.id);
+    //         self.cars.insert(car.id, car);
+    //         //Ok(())
+    //     }
+    // }
+
+    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
+        // 1. Explicit Check: No silent side-effects
         if self.cars.contains_key(&car.id) {
-            println!("Railyard Error: Car ID {} already exists in the yard!", car.id);
-            let id = car.id;
-            self.purgatory.push(car); // Place the car in purgatory instead of returning it to the caller
-            //return Err((car, TrainError::DuplicateId(id)));
-        } else {
-            println!("Railyard: Received Car {} into the yard.", car.id);
-            self.cars.insert(car.id, car);
-            //Ok(())
+            println!("{RED}Railyard Error: Car ID {} is a duplicate!{RESET}", car.id);
+            let car_id = car.id;
+            return Err((car, TrainError::DuplicateId(car_id)));
         }
+
+        // 2. Success: The state change is clear
+        println!("{GREEN}Railyard: Car {} safely docked in locker.{RESET}", car.id);
+        self.cars.insert(car.id, car);
+        Ok(())
     }
-
-
 
 
 
@@ -664,13 +676,34 @@ fn main() {
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
 
-    yard.receive_car(carriage);
-    yard.receive_car(dining_car);
-    yard.receive_car(boxcar1);
-    yard.receive_car(boxcar2);
-    yard.receive_car(boxcar3);
-    yard.receive_car(boxcar4);
-    yard.receive_car(caboose);
+    if let Err((homeless_car, error)) = yard.receive_car(carriage) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(dining_car) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar1) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar2) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar3) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(boxcar4) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
+    if let Err((homeless_car, error)) = yard.receive_car(caboose) {
+        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+        yard.purgatory.push(homeless_car);
+    }
 
 yard.print_report();
 
