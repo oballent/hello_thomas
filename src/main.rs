@@ -1,4 +1,3 @@
-use std::{clone, error};
 use std::collections::{HashMap, VecDeque};
 
 const RESET: &str = "\x1b[0m";
@@ -79,7 +78,16 @@ enum TrainError {
     ContrabandOnBoard(String),
     NoCargoOrPassengers,
     DuplicateId(u32),
+    // ... our existing variants ...
     NoAvailableEngine(EngineType),
+    AssemblyFailed {
+        missing_car_ids: Vec<u32>,
+        engine_returned: u32,
+    },
+    EngineCapacityExceeded {
+        required: u32,
+        capacity: u32,
+    },
 }
 
 
@@ -128,6 +136,19 @@ impl TrainCar {
         
     }
 
+    fn calculate_cargo_weight(&self) -> u32 {
+        self.cargo
+            .as_ref()
+            .map(|c| c.actual_weight)
+            .unwrap_or(0)
+    }
+
+    // fn calculate_cargo_weight(&self) -> u32 {
+    //     match &self.cargo {
+    //         Some(cargo) => cargo.actual_weight,
+    //         None => 0,
+    //     }
+    // }
 
     fn prepare_for_departure(&self) -> Result<String, TrainError> {
         //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
@@ -156,6 +177,11 @@ impl Engine {
         // For demonstration, we'll just set the fuel level to Full
         self.fuel_level = FuelLevel::Full;
         println!("Engine {} is now fully refueled!", self.id);
+    }
+
+    pub fn current_capacity(&self) -> u32 {
+        // We take engine's engine_type's max capacity and multiply it by the engine's fuel_level's percentage_capacity_multiplier to get the actual current capacity of the engine.
+        (self.engine_type.max_capacity() as f32 * self.fuel_level.capacity_multiplier()) as u32
     }
 }
 
@@ -346,6 +372,9 @@ impl Railyard {
 
 
 
+
+
+
     /// Move a car identified by its `car_id` from the yard into a train.
     ///
     /// Takes ownership of the car by removing it from `self.cars` and pushing it
@@ -380,25 +409,81 @@ impl Railyard {
 
 
 
-    pub fn assemble_train(&mut self, roundhouse: &mut Roundhouse, engine_req: EngineType, car_ids: Vec<u32>) -> Result<Train, TrainError> {
-        // 1. Acquire Power
-        let engine = roundhouse.dispatch(engine_req)
-            .ok_or(TrainError::NoAvailableEngine(engine_req))?;
 
-        // 2. Acquire Payload
-        let mut attached_cars = Vec::new();
-        for id in car_ids {
-            if let Some(car) = self.cars.remove(&id) {
-                attached_cars.push(car);
+    pub fn assemble_train(&mut self, roundhouse: &mut Roundhouse, engine_req: EngineType, car_ids: Vec<u32>) -> Result<Train, TrainError> {
+
+        //calculate total weight of requested cars and check for missing cars before taking ownership of the engine. If any car is missing or if the total weight exceeds the engine's capacity, we can return an error without having to worry about returning the engine or any cars we might have already taken ownership of.
+        let mut total_weight = 0;
+        
+        // // Keeping the following for now as a reference for how we can use iterators and combinators
+        // // The "Ghost Logic" without the "Ghost Struct"
+        // let total_weight: u32 = car_ids.iter()
+        //     .filter_map(|id| self.cars.get(id)) // Search for the car: returns Option<&TrainCar>
+        //     .map(|car| car.calculate_cargo_weight()) // Call the weight method on the reference
+        //     .sum();
+
+        for id in &car_ids {
+
+            // if let Some(car) = self.cars.get(id) { // .get() returns a reference &TrainCar
+            //     total_weight += car.calculate_cargo_weight();
+            // } else {
+            //     return Err(TrainError::AssemblyFailed {
+            //         missing_car_ids: vec![*id],
+            //         engine_returned: 0, // No engine pulled yet,
+            //     });
+            // }
+
+            match self.cars.get(id) {
+                Some(car) => total_weight += car.calculate_cargo_weight(),
+                None => Err(TrainError::AssemblyFailed { 
+                    missing_car_ids: vec![*id], 
+                    engine_returned: 0 // No engine pulled yet 
+                })?
             }
         }
 
-        // 3. Create the Assembly (The Train)
+        let actual_capacity = roundhouse.stalls.get(&engine_req)
+            .and_then(|queue| queue.front()) // Peek at reference to the next engine of the requested type
+            .map(|engine| engine.current_capacity()) // Check its current capacity
+            .unwrap_or(0); // If no engines of that type are available, treat as zero capacity
+
+        // 1. Take ownership of the power
+
+        let can_proceed = actual_capacity >= total_weight;
+       
+        if !can_proceed {
+            println!("{RED}Assembly Failed: No available engine of type {:?} can handle the total cargo weight of {}. Returning Engine to Roundhouse.{RESET}", engine_req, total_weight);
+            return Err(TrainError::EngineCapacityExceeded { required: total_weight, capacity: actual_capacity });
+        }
+
+        let engine = roundhouse.dispatch(engine_req).unwrap();
+
+        // actual_capacity = engine.current_capacity();
+
+        // if total_weight > actual_capacity {
+        //     println!("{RED}Assembly Failed: Total cargo weight {} exceeds Engine {}'s capacity of {}. Returning Engine to Roundhouse.{RESET}", total_weight, engine.id, actual_capacity);
+        //     roundhouse.house(engine); // Return the engine immediately
+        //     return Err(TrainError::EngineCapacityExceeded { required: total_weight, capacity: actual_capacity });
+        // }
+
+
+        //MOOWAHAHA! Functional programming style are belong to me! (for now, with Google's Gemini's and Copilot's help...)
+        let attached_cars = car_ids.iter()
+            .filter_map(|id| self.cars.remove(id)) // Try to take ownership of each requested car: returns Option<TrainCar>
+            .collect(); // Collect the successfully removed cars into a Vec<TrainCar>
+
+        // Gathering the payload: We have already confirmed that all requested cars exist and that the engine can handle the weight, so now we can take ownership of the cars and move them into the train. If any car is missing at this point, it means something went wrong with our earlier checks, and we will need to roll back by returning any cars we did find and returning the engine to the roundhouse.
+        // for id in &car_ids {
+        //     let car = self.cars.remove(id).unwrap(); // We can safely unwrap here because we already checked for missing cars
+        //     attached_cars.push(car);
+        // }
+
         Ok(Train {
-            id: self.generate_new_id(), // We'll need a way to track these
+            id: self.generate_new_id(),
             engine,
             cars: attached_cars,
         })
+
     }
 
 
@@ -442,10 +527,8 @@ impl Railyard {
         train
     }
         
-
-
-        
 }   
+
 
 
 
@@ -472,12 +555,13 @@ impl Roundhouse {
 }
 
 
-
+//testing testing. what happened to inline suggestions? HAHA! They're back. Is this cheating? ::: Maybe. But it's also a great way to quickly iterate on code without needing to worry about the borrow checker until we have a working version of the logic. Once we have the logic down, we can go back and clean up the code and make it more idiomatic. So in that sense, it's a useful tool for learning and prototyping. But it's also important to eventually understand how to write code that works with the borrow checker and ownership system in Rust, so I would recommend using inline suggestions as a way to quickly iterate on code, but also taking the time to learn how to write code that works with Rust's ownership system without relying on inline suggestions.
 fn main() {
 
 
     let mut yard: Railyard = Railyard::new();
     let mut roundhouse: Roundhouse = Roundhouse::new();
+
 
 
     let cargo1 = Cargo { item: String::from("bananas"), manifest_weight: 1000, actual_weight: 1000, contraband: None };
@@ -489,6 +573,8 @@ fn main() {
     let cargo7 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
 
 
+    
+
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
     let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
@@ -498,34 +584,32 @@ fn main() {
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
 
-    if let Err((homeless_car, error)) = yard.receive_car(carriage) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
+    let incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
+
+
+    for car in incoming_cars {
+        let car_id = car.id;
+        match yard.receive_car(car) {
+            Ok(_) => println!("Car {} successfully received into the yard.", car_id),
+            Err((homeless_car, error)) => {
+                println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
+                yard.purgatory.push(homeless_car);
+            }
+        }
     }
-    if let Err((homeless_car, error)) = yard.receive_car(dining_car) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
-    if let Err((homeless_car, error)) = yard.receive_car(boxcar1) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
-    if let Err((homeless_car, error)) = yard.receive_car(boxcar2) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
-    if let Err((homeless_car, error)) = yard.receive_car(boxcar3) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
-    if let Err((homeless_car, error)) = yard.receive_car(boxcar4) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
-    if let Err((homeless_car, error)) = yard.receive_car(caboose) {
-        println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-        yard.purgatory.push(homeless_car);
-    }
+
+    
+    // for car in incoming_cars {
+    //     if let Err((homeless_car, error)) = yard.receive_car(car) {
+    //         println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+    //         yard.purgatory.push(homeless_car);
+    //     }
+    // }
+
+    // if let Err((homeless_car, error)) = yard.receive_car(carriage) {
+    //     println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
+    //     yard.purgatory.push(homeless_car);
+    // }
 
 yard.print_report();
 
@@ -534,7 +618,7 @@ yard.print_report();
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, fuel_level: FuelLevel::Full };
     let engine3 = Engine { id: 3, engine_type: EngineType::Percy, fuel_level: FuelLevel::Half };
     let engine4 = Engine { id: 4, engine_type: EngineType::Thomas, fuel_level: FuelLevel::Half };
-    let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, fuel_level: FuelLevel::Full };
+    let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, fuel_level: FuelLevel::Half };
 
 
 
@@ -548,8 +632,11 @@ yard.print_report();
 
     println!("{BOLD}{YELLOW}--- MISSION DISPATCH: REQUESTING A GORDON ---{RESET}");
     let car_ids = vec![1, 2, 3]; // Requesting the specific cars we just added
+    //let car_ids = vec![1, 2, 3, 7]; // Intentional Failure Check
+    let engine_req: EngineType = EngineType::Gordon; // passes (just about everything)
+    //let engine_req: EngineType = EngineType::Percy; // intentional failure check
     
-    match yard.assemble_train(&mut roundhouse, EngineType::Gordon, car_ids) {
+    match yard.assemble_train(&mut roundhouse, engine_req, car_ids) {
         Ok(mut new_train) => {
             println!("{GREEN}Success! Train {} assembled with Engine {}.{RESET}", new_train.id, new_train.engine.id);
             new_train.dispatch().ok();
@@ -574,5 +661,26 @@ fn describe_personality(engine: &EngineType) -> String{
         EngineType::Percy => String::from("Percy is a brave and intuitive little engine that doesn't always think things through, but always does his best. Percy is the most adventurous."),
         EngineType::Gordon => String::from("Gordon is proud and doesn't like to admit when he's wrong, but he cares about his friends. Gordon is the strongest."),
         EngineType::Diesel => String::from("Diesel is a troublemaker."),
+    }
+}
+
+impl EngineType {
+    pub fn max_capacity(&self) -> u32 {
+        match self {
+            EngineType::Percy => 5000,
+            EngineType::Thomas => 15000,
+            EngineType::Gordon => 50000,
+            EngineType::Diesel => 20000,
+        }
+    }
+}
+
+impl FuelLevel {
+    fn capacity_multiplier(&self) -> f32 {
+        match self {
+            FuelLevel::Full => 1.00,
+            FuelLevel::Half => 0.50,
+            FuelLevel::Low => 0.10,
+        }
     }
 }
