@@ -17,7 +17,6 @@ const BOLD: &str = "\x1b[1m";
 #[derive(Debug)]
 struct Cargo{
     item: String,
-    manifest_weight: u32,
     actual_weight: u32,
     contraband: Option<String>,
 }
@@ -40,6 +39,7 @@ struct Train{
     id: u32,
     cars: Vec<TrainCar>,
     engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
+    distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
 }
 
 
@@ -54,7 +54,6 @@ struct Railyard {
 }
 
 
-// Assuming EngineType and Engine are defined
 struct Roundhouse {
     stalls: HashMap<EngineType, VecDeque<Engine>>,
 }
@@ -86,236 +85,100 @@ enum EngineType {
 
 #[derive(Debug)]
 enum TrainError {
-    EngineOverheat,
-    DieselInTheStation,
-    LowFuel,
     ContrabandOnBoard(String),
-    NoCargoOrPassengers,
     DuplicateId(u32),
     // ... our existing variants ...
-    NoAvailableEngine(EngineType),
+    NoAvailableEngine,
     AssemblyFailed {
         missing_car_ids: Vec<u32>,
         engine_returned: u32,
     },
-    EngineCapacityExceeded {
-        required: u32,
-        capacity: u32,
+    MissionImpossible {
+        reason: String,
     },
 }
 
+// fn check_contraband(cargo: &Cargo) -> Result<String, TrainError> {
+//     match &cargo.contraband {
+//         Some(item) => Err(TrainError::ContrabandOnBoard(item.clone())), // We clone the string here to avoid taking ownership of it. This way, we can still use the original cargo object later if we need to.
+//         None => Ok(String::from("No contraband detected in this cargo!")),
+//     }
+// }
 
 
 impl Cargo {
-    fn check_contraband(&self) -> Result<String, TrainError> {
-        match self.manifest_weight == self.actual_weight{
-            true => Ok(format!("Cargo '{}' is clear of contraband.", self.item)),
-            false => match &self.contraband {
-                Some(item) => {
-                    println!("Contraband found on cargo '{}'!", item);
-                    Err(TrainError::ContrabandOnBoard(format!("Contraband detected: {}!", item)))
-                },
-                None => Ok(format!("Cargo '{}' has a weight discrepancy but no contraband detected.", self.item)),
-            }
+    // We use &mut self because we are going to "reach in and grab" the item
+    fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
+        
+        // .take() effectively "steals" the contraband out of the cargo
+        // and leaves a None in its place.
+        if let Some(seized_item) = self.contraband.take() {
+            println!("{RED}SECURITY: Confiscated '{}' from cargo!{RESET}", seized_item);
+            
+            // We return an Error that OWNS the stolen string.
+            // No references, no lifetimes, no dangling pointers.
+            return Err(TrainError::ContrabandOnBoard(seized_item));
         }
+
+        Ok(format!("Cargo '{}' is clear and safe.", self.item))
     }
 }
 
 
-
 impl TrainCar {
-    fn check_passenger(&self) {
-        match &self.passenger {
-            Some(name) => println!("{} is aboard!", name),
-            None => println!("Ain't nobody on this train car!"),
-        }
-    }
-
-    /* */
-    fn check_contraband(&self) -> Result<String, TrainError> {
-        if let Some(cargo) = &self.cargo {
-            cargo.check_contraband()
-        } else {
-            Ok(String::from("No cargo on board, so no contraband!"))
-        }
-    }
-
-    fn check_freight(&self) -> Result<String, TrainError> {
-        match (&self.cargo, &self.passenger) {
-            (None, None) => Err(TrainError::NoCargoOrPassengers),
-            (Some(cargo), None) => Ok(format!("Cargo on board: {:?}", cargo)),
-            (None, Some(passenger)) => Ok(format!("Passenger aboard: {}", passenger)),
-            (Some(cargo), Some(passenger)) => Ok(format!("Cargo on board: {:?}. Passenger aboard: {}", cargo, passenger)),
-        }
-        
-    }
-
     fn calculate_cargo_weight(&self) -> u32 {
         self.cargo
             .as_ref()
             .map(|c| c.actual_weight)
             .unwrap_or(0)
     }
-
-    // fn calculate_cargo_weight(&self) -> u32 {
-    //     match &self.cargo {
-    //         Some(cargo) => cargo.actual_weight,
-    //         None => 0,
-    //     }
-    // }
-
-    fn prepare_for_departure(&self) -> Result<String, TrainError> {
-        //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
-         let freight_status = self.check_freight()?;
-         // Where does OK(String::from("The train is ready for departure!")) come from? Is it just a way to return a successful result from the function, indicating that the train is ready for departure? Yes, that's correct! The Ok(String::from("The train is ready for departure!")) is a way to return a successful result from the prepare_for_departure() function. It indicates that the engine started successfully and the train is ready for departure. The Ok variant of the Result type is used to represent a successful outcome, while the Err variant is used to represent an error. In this case, if the engine starts successfully, we return an Ok value with a message indicating that the train is ready for departure. If there was an error starting the engine (like if it's a Diesel), we would return an Err value with the appropriate TrainError.
-         let contraband_status = self.check_contraband()?;
-         
-         Ok(format!("Preparing Car {} for departure. Freight Status: {}. Contraband Status: {}", self.id, freight_status, contraband_status))
-    }
-
 }
 
 
 impl Engine {
-    fn rehabilitate(&mut self) {
-        println!("Rehabilitating Engine {}...", self.id);
-        // Logic to rehabilitate the engine, e.g., fixing mechanical issues
-        // For demonstration, we'll just print a message and set fuel level to Full
-        self.current_fuel = self.engine_type.max_fuel_capacity(); // Refill the fuel as part of rehabilitation
-        println!("Engine {} has been rehabilitated and refueled!", self.id);
+    /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
+    pub fn calculate_fuel_requirement(&self, weight: u32, distance: u32) -> f32 {
+        let work = weight as f32 * distance as f32;
+        let quotient = self.engine_type.fuel_efficiency() * 500.0;
+        work / quotient
     }
 
-    fn refuel(&mut self) {
-        println!("Refueling Engine {}...", self.id);
-        // Logic to refuel the engine
-        // For demonstration, we'll just set the fuel level to Full
-        self.current_fuel = self.engine_type.max_fuel_capacity();
-        println!("Engine {} is now fully refueled!", self.id);
-    }
-
-     pub fn current_capacity(&self) -> u32 {
-        let max_capacity = self.engine_type.max_capacity();
-        let fuel_multiplier = self.current_fuel / self.engine_type.max_fuel_capacity(); // This gives us a value between 0.0 and 1.0 representing how full the engine is
-        (max_capacity as f32 * fuel_multiplier) as u32
-    }
-
-    pub fn can_complete_mission(&self, total_weight: u32, distance_km: u32) -> bool {
-        // match ((total_weight * distance_km) / (self.engine_type.fuel_efficiency() as u32)) <= self.current_capacity() {
-        //     true => println!("{GREEN}Engine {} can complete the mission!{RESET}", self.id),
-        //     false => println!("{RED}Engine {} cannot complete the mission due to weight and distance requirements.{RESET}", self.id),
-        // }
-
-        let work_required = (total_weight as f32) * (distance_km as f32);
-        let fuel_quotient: f32 = self.engine_type.fuel_efficiency() * 1000.0; // This scaling factor is arbitrary and can be adjusted based on how you want to balance the formula
-        let fuel_required = work_required / fuel_quotient;
-        if fuel_required > self.current_fuel {
-            println!("{RED}Mission Impossible: Even at current fuel levels, Engine {} cannot complete the mission due to weight and distance requirements.{RESET}", self.id);
+    pub fn can_complete_mission(&self, weight: u32, distance: u32) -> bool {
+        let needed = self.calculate_fuel_requirement(weight, distance);
+        
+        if needed > self.current_fuel {
+            println!("{RED}Mission Impossible: Engine {} needs {:.1}, has {:.1}{RESET}", self.id, needed, self.current_fuel);
             false
         } else {
-            println!("{GREEN}Mission Possible: Engine {} can complete the mission with current fuel levels!{RESET}", self.id);
+            println!("{GREEN}Mission Possible: Engine {} ready!{RESET}", self.id);
             true
         }
+    }
 
-        // // 1. Get the engine's efficiency from its EngineType
-        // let efficiency = self.engine_type.fuel_efficiency();
-        // // 2. Calculate the "PercentageRequired" using the formula and scaling factor above
-        // let work_required = total_weight as f32 * distance_km as f32;
-        // let fuel_required = work_required / (efficiency * 1000.0);
-        // // (Don't forget to cast your u32 variables using `as f32` before dividing!)
-        // if fuel_required > self.engine_type.max_fuel_capacity() {
-        //     println!("{RED}Mission Impossible: Even at full fuel, Engine {} cannot complete the mission due to weight and distance requirements.{RESET}", self.id);
-        //     return false;
-        // }
-        // // 3. Get the engine's current available fuel percentage
-        // else {
-        //     true;
-        // }
-        // // 4. Return true if available >= required, else false
-        
-        // // Placeholder return so it compiles while you think
-        // false 
+    pub fn burn_fuel(&mut self, weight: u32, distance: u32) {
+        let needed = self.calculate_fuel_requirement(weight, distance);
+        self.current_fuel -= needed;
+        println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
     }
 }
 
 
 impl Train {
     
-    fn start_engine(&self) -> Result<String, TrainError> {
-        match self.engine.engine_type {
-            EngineType::Diesel => Err(TrainError::DieselInTheStation),
-            _ => Ok(String::from("The engine starts successfully!")),
-        }
-    }
-
-    fn check_fuel(&self) -> Result<String, TrainError> {
-        if self.engine.current_fuel < self.engine.engine_type.max_fuel_capacity() * 0.5 {
-            Err(TrainError::LowFuel)
-        } else {
-            Ok(format!("Fuel level is sufficient at {} units.", self.engine.current_fuel))
-        }
-    }
-
-
-    
-    fn prepare_for_departure(&self) -> Result<String, TrainError> {
-        //How come we no longer reference self.start_engine() with &self.start_engine()? Is it because we are already borrowing self in the method signature, so we can call self.start_engine() directly without needing to borrow it again? Yes, that's correct! Since the method signature already borrows self as an immutable reference (&self), we can call other methods on self directly without needing to borrow it again. The Rust compiler understands that we are working with a borrowed reference to self and allows us to call methods on it without needing to explicitly borrow it again. So in this case, we can simply call self.start_engine() without needing to use &self.start_engine(). The compiler will handle the borrowing for us and ensure that we are using the borrowed reference correctly.
-         let engine_status = self.start_engine()?;
-         
-         let fuel_status = self.check_fuel()?;
-         
-         Ok(format!("Departure Status: {}, Fuel Status: {:?}", engine_status, fuel_status))
-    }
-
-
-
-    pub fn purge_rejected_cars(&mut self) -> Vec<TrainCar> {
-    let mut rejected_cars = Vec::new();
-    let mut good_cars = Vec::new();
-
-    // The Train surgically removes its own cars
-    for car in self.cars.drain(..) {
-        if car.prepare_for_departure().is_ok() {
-            good_cars.push(car);
-        } else {
-            rejected_cars.push(car);
-        }
-    }
-
-    // Re-assign the good cars to the train
-    self.cars = good_cars;
-
-    // Hand the duds back to the caller
-    rejected_cars
-}
-
-    fn dispatch(&self) -> Result<Vec<&TrainCar>, TrainError> {
+    // Notice the &mut self. The train is 'taking damage' (burning fuel).
+    fn dispatch(&mut self) -> Result<(), TrainError> {
+        println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
         
-        match self.prepare_for_departure() {
-            Ok(status) => println!("Train {}: {}", self.id, status),
-            Err(e) => {
-                println!("Train {} cannot depart: {:?}", self.id, e);
-                return Err(e);
-            }
-        }
+        // 1. Calculate the final weight
+        let total_weight = self.calculate_cargo_weight();
+        
+        // 2. The Consequence
+        self.engine.burn_fuel(total_weight, self.distance_km);
+        
+        // 3. (Future) We could clear the cars here, simulating that they were delivered!
+        // self.cars.clear(); 
 
-        for car in &self.cars {
-           
-            match car.prepare_for_departure() {
-                Ok(msg) => println!("Train Car {}: {}", car.id, msg),
-                Err(e) => {
-                    println!("Train Car {}: Error preparing for departure: {:?}", car.id, e);
-                    println!("--- Dispatcher: Skipping car {} and moving to next... ---", car.id);
-                }
-            }
-        }
-
-        let ok_engine_line: Vec<&TrainCar> = self.cars.iter()// // 1. Start the conveyor belt
-        .filter(|&car| car.prepare_for_departure().is_ok()) // 2. "Filter" out the Diesels and Low_Fuel cars
-        .collect(); // 3. Put cars that did not return an error into a new Box (Vec)
-
-    
-        Ok(ok_engine_line)
-            
+        Ok(())
     }
 
 
@@ -331,8 +194,6 @@ impl Train {
     }
 
 }
-
-
 
 
 impl Railyard {
@@ -415,39 +276,30 @@ impl Railyard {
     }
 
 
-
-
-
-
-    fn house(&mut self, train: Train) {
-        //println!("\n\n  house called with Train ID {}. Adding to the yard...", train.id);
-        self.trains.push(train);
-    }
-
-
-    
-    fn add_car(&mut self, car: TrainCar) {
-        //println!("\n\n  add_car called with Car ID {}. Adding to the yard without duplicate check...", car.id);
-        self.cars.insert(car.id, car);
-    }
-
-    pub fn receive_car(&mut self, car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
-        // 1. Explicit Check: No silent side-effects
+    pub fn receive_car(&mut self, mut car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
+        // 1. Explicit Check: No duplicate IDs
         if self.cars.contains_key(&car.id) {
             println!("{RED}Railyard Error: Car ID {} is a duplicate!{RESET}", car.id);
             let car_id = car.id;
             return Err((car, TrainError::DuplicateId(car_id)));
         }
 
-        // 2. Success: The state change is clear
+        // 2. The Confiscation Check (The Security Gate)
+        // We use &mut because we might need to physically alter the cargo
+        if let Some(cargo) = &mut car.cargo {
+            // We ask the cargo to check itself and confiscate if necessary
+            if let Err(e) = cargo.check_and_confiscate() {
+                // If the cargo returns a Contraband error, we reject the whole car
+                println!("{RED}SECURITY ALERT: Car {} contained illegal goods! Moving to Purgatory.{RESET}", car.id);
+                return Err((car, e)); 
+            }
+        }
+
+        // 3. Success: The state change is clear
         println!("{GREEN}Railyard: Car {} safely docked in locker.{RESET}", car.id);
         self.cars.insert(car.id, car);
         Ok(())
     }
-
-
-
-
 
 
     /// Move a car identified by its `car_id` from the yard into a train.
@@ -473,16 +325,15 @@ impl Railyard {
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
 
-            self.receive_car(car);
+            if let Err((car, error)) = self.receive_car(car) {
+                println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
+                self.purgatory.push(car);
+            }
 
         } else {
             println!("Car {} is not attached to Train {}.", id, train.id);
         }
     }
-
-
-
-
 
 
     pub fn assemble_train(&mut self, roundhouse: &mut Roundhouse, mission: &Mission /* <--- We take a reference to the work order */) -> Result<Train, TrainError> {
@@ -494,24 +345,8 @@ impl Railyard {
         //calculate total weight of requested cars and check for missing cars before taking ownership of the engine. If any car is missing or if the total weight exceeds the engine's capacity, we can return an error without having to worry about returning the engine or any cars we might have already taken ownership of.
         let mut total_weight = 0;
         
-        // // Keeping the following for now as a reference for how we can use iterators and combinators
-        // // The "Ghost Logic" without the "Ghost Struct"
-        // let total_weight: u32 = car_ids.iter()
-        //     .filter_map(|id| self.cars.get(id)) // Search for the car: returns Option<&TrainCar>
-        //     .map(|car| car.calculate_cargo_weight()) // Call the weight method on the reference
-        //     .sum();
-
         for id in car_ids {
-
-            // if let Some(car) = self.cars.get(id) { // .get() returns a reference &TrainCar
-            //     total_weight += car.calculate_cargo_weight();
-            // } else {
-            //     return Err(TrainError::AssemblyFailed {
-            //         missing_car_ids: vec![*id],
-            //         engine_returned: 0, // No engine pulled yet,
-            //     });
-            // }
-
+            //We might get rid of this explicit check in the future and just rely on the filter_map and map combinators to do the work for us, but for now we'll keep it like this for clarity and to avoid any potential issues with ownership and borrowing when we move on to taking ownership of the cars and engine later in the function.
             match self.cars.get(id) {
                 Some(car) => total_weight += car.calculate_cargo_weight(),
                 None => Err(TrainError::AssemblyFailed { 
@@ -521,35 +356,18 @@ impl Railyard {
             }
         }
 
+        // Now we have the total weight of the requested cars, we can find a suitable engine from the roundhouse.
+    
+        // This transforms the Option<Engine> into a Result<Engine, TrainError> on the fly!
+        let engine = roundhouse.find_suitable_engine(total_weight, dist)
+            .ok_or(TrainError::NoAvailableEngine)?;
+
         // let actual_capacity = roundhouse.stalls.get(&engine_req)
         //     .and_then(|queue| queue.front()) // Peek at reference to the next engine of the requested type
         //     .map(|engine| engine.current_capacity()) // Check its current capacity
         //     .unwrap_or(0); // If no engines of that type are available, treat as zero capacity
 
         // 1. Take ownership of the power
-        
-
-
-        // let can_proceed = actual_capacity >= total_weight;
-       
-        // if !can_proceed {
-        //     println!("{RED}Assembly Failed: No available engine of type {:?} can handle the total cargo weight of {}. Returning Engine to Roundhouse.{RESET}", engine_req, total_weight);
-        //     return Err(TrainError::EngineCapacityExceeded { required: total_weight, capacity: actual_capacity });
-        // }
-
-        // let engine = roundhouse.dispatch(engine_req).unwrap();
-
-
-
-
-        // actual_capacity = engine.current_capacity();
-
-        // if total_weight > actual_capacity {
-        //     println!("{RED}Assembly Failed: Total cargo weight {} exceeds Engine {}'s capacity of {}. Returning Engine to Roundhouse.{RESET}", total_weight, engine.id, actual_capacity);
-        //     roundhouse.house(engine); // Return the engine immediately
-        //     return Err(TrainError::EngineCapacityExceeded { required: total_weight, capacity: actual_capacity });
-        // }
-
 
         //MOOWAHAHA! Functional programming style are belong to me! (for now, with Google's Gemini's and Copilot's help...)
         let attached_cars = car_ids.iter()
@@ -562,58 +380,15 @@ impl Railyard {
         //     attached_cars.push(car);
         // }
 
-        let engine = roundhouse.find_suitable_engine(total_weight, dist)
-            .ok_or(TrainError::NoAvailableEngine(EngineType::Diesel))?; // We can specify a more detailed error here if we want, but for now we'll just say no suitable engine available.
-
         Ok(Train {
             id: self.generate_new_id(),
             engine,
             cars: attached_cars,
+            distance_km: dist,
         })
 
     }
 
-
-
-
-
-     fn dispatch_trains(&self) {
-        for train in &self.trains {
-            match train.dispatch() {
-                Ok(ok_cars) => println!("Train {} is ready for departure with {} cars!", train.id, ok_cars.len()),
-                Err(e) => println!("Train {} cannot depart: {:?}", train.id, e),
-            }
-        }
-    }
-
-
-
-
-    pub fn service_train(&mut self, mut train: Train) -> Train {
-        println!("Servicing Train {}...", train.id);
-        train.engine.rehabilitate();    // At some point, we might want to have different levels of service that do different things to the engine and cars, but for now we'll just do a full rehab and refuel.
-        train.engine.refuel();  // Eventually, we could have different levels of service that do different things to the engine and cars, but for now we'll just do a full rehab and refuel.
-        
-        let mut ok_cars: Vec<TrainCar> = Vec::new();
-
-        for car in train.cars.drain(..) {
-            match car.prepare_for_departure() {
-                Ok(msg) => {
-                    println!("Train Car {} is ready for departure: {}", car.id, msg);
-                    ok_cars.push(car);
-                }
-                Err(e) => {
-                    println!("Train Car {} cannot depart: {:?}. Pushing to Railyard.", car.id, e);
-
-                    self.receive_car(car);
-                    
-                }
-            }
-        }
-        train.cars = ok_cars;
-        train
-    }
-        
 }   
 
 
@@ -658,42 +433,16 @@ impl Roundhouse {
                 // If it is, look inside that specific stall
                 if let Some(queue) = self.stalls.get_mut(&etype) {
                     
-                    // // Peek at the front engine
-                    // if let Some(engine) = queue.front() {
-                        
-                    //     // Ask the engine if it has the fuel for the distance
-                    //     if engine.can_complete_mission(total_weight, distance_km) {
-                            
-                    //         // WE HAVE A WINNER. Pop it from the stall and return it.
-                    //         return queue.pop_front();
-                    //     }
-                    // }
-                    // Assume we are already inside the `if let Some(queue) = self.stalls.get_mut(&etype)` block
+                    // 1. Find the position of the first capable engine
+                    let winner_index = queue.iter().position(|engine| {
+                        engine.can_complete_mission(total_weight, distance_km)
+                    });
 
-                    let mut found_index = None; // Our clipboard
-
-                    // .iter().enumerate() gives us both the position (0, 1, 2...) and the engine
-                    for (index, engine) in queue.iter().enumerate() {
-                        if engine.can_complete_mission(total_weight, distance_km) {
-                            found_index = Some(index); // Write down the number!
-                            break; // Stop looking! We found our fully-fueled Thomas.
-                        }
-                    }
-
-                    // If we wrote a number on our clipboard, remove that specific engine
-                    if let Some(index) = found_index {
-                        return queue.remove(index); // This physically pulls him out of the line!
-                    }
+                    // 2. Chain it using the `.and_then()` you love!
+                    // If position returned Some(index), and_then passes that index into queue.remove()
+                    return winner_index.and_then(|index| queue.remove(index));
                 }
 
-                // // 1. Find the position of the first capable engine
-                // let winner_index = queue.iter().position(|engine| {
-                //     engine.can_complete_mission(total_weight, distance_km)
-                // });
-
-                // // 2. Chain it using the `.and_then()` you love!
-                // // If position returned Some(index), and_then passes that index into queue.remove()
-                // return winner_index.and_then(|index| queue.remove(index));
             }
         }
         
@@ -709,16 +458,16 @@ fn main() {
 
     let mut yard: Railyard = Railyard::new();
     let mut roundhouse: Roundhouse = Roundhouse::new();
-    let mission1: Mission = Mission { id: 1, destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6], distance_km: 500 };
+    let mission1: Mission = Mission { id: 1, destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6], distance_km: 250 };
 
 
-    let cargo1 = Cargo { item: String::from("bananas"), manifest_weight: 1000, actual_weight: 1000, contraband: None };
-    let cargo2 = Cargo { item: String::from("crates of oranges"), manifest_weight: 1000, actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
-    let cargo3 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
-    let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), manifest_weight: 1500, actual_weight: 1500, contraband: None };
-    let cargo5 = Cargo { item: String::from("Scrap Metal"), manifest_weight: 10000, actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
-    let cargo6 = Cargo { item: String::from("pallets of electronics"), manifest_weight: 3000, actual_weight: 3000, contraband: None };
-    let cargo7 = Cargo { item: String::from("Redacted Documents"), manifest_weight: 2000, actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
+    let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
+    let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
+    let cargo3 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
+    let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
+    let cargo5 = Cargo { item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
+    let cargo6 = Cargo { item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
+    let cargo7 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
 
 
     
@@ -759,13 +508,10 @@ fn main() {
     //     yard.purgatory.push(homeless_car);
     // }
 
-yard.print_report(&roundhouse);
-
-
-    let engine1 = Engine { id: 1, engine_type: EngineType::Diesel, current_fuel: 500.0 };
+    let engine4 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 2000.0 };
     let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 500.0 };
-    let engine4 = Engine { id: 4, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
+    let engine1 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 500.0 };
     let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
 
 
@@ -776,6 +522,10 @@ yard.print_report(&roundhouse);
     roundhouse.house(engine3);
     roundhouse.house(engine2);
     roundhouse.house(engine5);
+
+    
+    yard.print_report(&roundhouse);
+
 
 
     // println!("{BOLD}{YELLOW}--- MISSION DISPATCH: REQUESTING A GORDON ---{RESET}");
@@ -799,6 +549,13 @@ yard.print_report(&roundhouse);
             new_train.dispatch().ok();
             yard.trains.push(new_train); // Add to active missions
         },
+        Err(TrainError::DuplicateId(id)) => println!("{RED}Assembly Failed: Duplicate ID {}{RESET}", id),
+        Err(TrainError::AssemblyFailed { missing_car_ids, engine_returned }) => {
+            println!("{RED}Assembly Failed: Missing Car IDs {:?}. Engine {} returned to roundhouse.{RESET}", missing_car_ids, engine_returned);
+            // The following comment will be 'deprecated' right, Polaris: Here we could also add logic to return the engine to the roundhouse if it was already pulled, and to return any cars that were already removed from the yard back to their lockers, but for now we'll just print the error message.
+        },
+        Err(TrainError::MissionImpossible { reason }) => println!("{RED}Assembly Failed: Mission Impossible - {reason}{RESET}"),
+        Err(TrainError::ContrabandOnBoard(reason)) => println!("{RED}Assembly Failed: Contraband Detected - {reason}{RESET}"),
         Err(e) => println!("{RED}Assembly Failed: {:?}{RESET}", e),
     }
 
@@ -843,31 +600,4 @@ impl EngineType {
             EngineType::Gordon => 1.8, // Powerful, but a gas guzzler
         }
     }
-
-    fn describe_personality(&self) -> String{
-        match self {
-            EngineType::Thomas => String::from("Thomas is a friendly and helpful engine, always ready to lend a hand and make friends. Thomas is the most popular."),
-            EngineType::Percy => String::from("Percy is a brave and intuitive little engine that doesn't always think things through, but always does his best. Percy is the most adventurous."),
-            EngineType::Gordon => String::from("Gordon is proud and doesn't like to admit when he's wrong, but he cares about his friends. Gordon is the strongest."),
-            EngineType::Diesel => String::from("Diesel is a troublemaker."),
-        }
-    }
 }
-
-// impl FuelLevel {
-//     fn capacity_multiplier(&self) -> f32 {
-//         match self {
-//             FuelLevel::Ten => 1.00,
-//             FuelLevel::Nine => 0.90,
-//             FuelLevel::Eight => 0.80,
-//             FuelLevel::Seven => 0.70,
-//             FuelLevel::Six => 0.60,
-//             FuelLevel::Five => 0.50,
-//             FuelLevel::Four => 0.40,
-//             FuelLevel::Three => 0.30,
-//             FuelLevel::Two => 0.20,
-//             FuelLevel::One => 0.10,
-//             FuelLevel::Empty => 0.00,
-//         }
-//     }
-// }
