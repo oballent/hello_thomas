@@ -35,27 +35,28 @@ struct TrainCar {
     passenger: Option<String>,
 }
 
+
+struct RejectedAsset {
+    car: TrainCar,
+    issue: TrainError,
+    timestamp: u64, // When did it fail? How to impement this? A counter?
+    source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
+}
+
+impl RejectedAsset {
+    fn new(car: TrainCar, issue: TrainError, timestamp: u64, source_mission: Option<u32>) -> Self {
+        Self { car, issue, timestamp, source_mission }
+    }
+}
+
+
+
 struct Train{
     id: u32,
     cars: Vec<TrainCar>,
     engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
     distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
-}
-
-
-
-struct Railyard {
-    trains: Vec<Train>,
-    cars: HashMap<u32, TrainCar>,
-    next_train_id: u32,
-    purgatory: Vec<TrainCar>
-    //cargo: Vec<Cargo>,
-
-}
-
-
-struct Roundhouse {
-    stalls: HashMap<EngineType, VecDeque<Engine>>,
+    mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
 }
 
 
@@ -67,6 +68,28 @@ struct Mission {
 }
 
 
+
+struct Railyard {
+    trains: Vec<Train>,
+    cars: HashMap<u32, TrainCar>,
+    next_train_id: u32,
+    purgatory: Vec<RejectedAsset>,
+    //cargo: Vec<Cargo>,
+
+}
+
+
+struct Roundhouse {
+    stalls: HashMap<EngineType, VecDeque<Engine>>,
+}
+
+
+struct Station {
+    name: String,
+    yard: Railyard,
+    roundhouse: Roundhouse,
+}
+
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
 enum EngineType {
     Diesel,
@@ -74,14 +97,6 @@ enum EngineType {
     Percy,
     Gordon,
 }
-
-// #[derive(Debug)]
-// enum FuelLevel {
-//     Full,
-//     Half,
-//     Low,
-// }
-
 
 #[derive(Debug)]
 enum TrainError {
@@ -131,6 +146,14 @@ impl TrainCar {
             .as_ref()
             .map(|c| c.actual_weight)
             .unwrap_or(0)
+    }
+
+    /// The 'Definition of Done'. Returns the cargo, leaving the car empty.
+    pub fn unload_cargo(&mut self) -> Option<Cargo> {
+        if let Some(cargo) = &self.cargo {
+            println!("{CYAN}UNLOADING: Car {} is discharging its payload {}.{RESET}", self.id, cargo.item);
+        }
+        self.cargo.take() // The magic of .take() again—ownership moves out!
     }
 }
 
@@ -254,7 +277,7 @@ impl Railyard {
             println!("    (Clear - All cars accounted for)");
         } else {
             for car in &self.purgatory {
-                println!("    {RED}⚠️ [CAR ID: {:02}] | REJECTED | Check Manifest immediately!{RESET}", car.id);
+                println!("    {RED}⚠️ [CAR ID: {:02}] | REJECTED | Reason: {:?} | Timestamp: {:?} | Source Mission: {:?}{RESET}", car.car.id, car.issue, car.timestamp, car.source_mission);
             }
         }
 
@@ -327,7 +350,8 @@ impl Railyard {
 
             if let Err((car, error)) = self.receive_car(car) {
                 println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
-                self.purgatory.push(car);
+                let rejected_asset: RejectedAsset = RejectedAsset::new(car, error, 0, train.mission_id); // We can fill in the timestamp and source_mission later when we implement those features.
+                self.purgatory.push(rejected_asset);
             }
 
         } else {
@@ -369,7 +393,7 @@ impl Railyard {
 
         // 1. Take ownership of the power
 
-        //MOOWAHAHA! Functional programming style are belong to me! (for now, with Google's Gemini's and Copilot's help...)
+        //MOOWAHAHA! Functional programming style is all mine! (for now, with Google's Gemini's and Copilot's help...)
         let attached_cars = car_ids.iter()
             .filter_map(|id| self.cars.remove(id)) // Try to take ownership of each requested car: returns Option<TrainCar>
             .collect(); // Collect the successfully removed cars into a Vec<TrainCar>
@@ -385,9 +409,49 @@ impl Railyard {
             engine,
             cars: attached_cars,
             distance_km: dist,
+            mission_id: Some(mission.id),
         })
 
     }
+
+    // fn disassemble_train(&mut self, train:Train, roundhouse:&mut Roundhouse){
+    //     let engine = train.engine;
+    //     roundhouse.house(engine);
+
+    //     for car in train.cars {
+    //         if let Err((car, error)) = self.receive_car(car) {
+    //             println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
+    //             self.purgatory.push(car);
+    //         }
+
+
+    //     }
+    // }
+
+    pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) {
+    let (engine, cars, _id) = (train.engine, train.cars, train.id); // Destructure the "Gestalt"
+
+    // 1. Return the Power
+    roundhouse.house(engine);
+
+    // 2. Process the Cars
+    for mut car in cars {
+        // Step A: The Security Gate & Intake
+        // This handles contraband and duplicate ID checks.
+        let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
+        if let Ok(_) = self.receive_car(car) {
+            // Step B: Fulfillment
+            // Now that the car is safely in the yard's HashMap, 
+            // we can reach in and "deliver" the goods.
+            if let Some(mut car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
+                 let payload = car_in_yard.unload_cargo();
+                 // Future: Send 'payload' to Warehouse
+            }
+        } else {
+            // receive_car already handles Purgatory internally in your current code.
+        }
+    }
+}
 
 }   
 
@@ -452,14 +516,41 @@ impl Roundhouse {
 }
 
 
-//testing testing. what happened to inline suggestions? HAHA! They're back. Is this cheating? ::: Maybe. But it's also a great way to quickly iterate on code without needing to worry about the borrow checker until we have a working version of the logic. Once we have the logic down, we can go back and clean up the code and make it more idiomatic. So in that sense, it's a useful tool for learning and prototyping. But it's also important to eventually understand how to write code that works with the borrow checker and ownership system in Rust, so I would recommend using inline suggestions as a way to quickly iterate on code, but also taking the time to learn how to write code that works with Rust's ownership system without relying on inline suggestions.
+
+impl Station {
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: String::from(name),
+            yard: Railyard::new(),
+            roundhouse: Roundhouse::new(),
+        }
+    }
+
+    // Notice we pass the Station's own internal roundhouse to the yard.
+    pub fn dispatch_train(&mut self, mission: &Mission) -> Result<Train, TrainError> {
+        println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", self.name, mission.id);
+        self.yard.assemble_train(&mut self.roundhouse, mission)
+    }
+
+    pub fn receive_train(&mut self, train: Train) {
+        println!("{BOLD}{GREEN}[{}] Train {} has arrived. Initiating breakdown.{RESET}", self.name, train.id);
+        self.yard.disassemble_train(train, &mut self.roundhouse);
+    }
+    
+    // A helper to inspect the local state
+    pub fn print_status(&self) {
+        println!("\n--- STATION REPORT: {} ---", self.name);
+        self.yard.print_report(&self.roundhouse);
+    }
+}
+
+
+
 fn main() {
 
 
-    let mut yard: Railyard = Railyard::new();
-    let mut roundhouse: Roundhouse = Roundhouse::new();
-    let mission1: Mission = Mission { id: 1, destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6], distance_km: 250 };
-
+    let mut tidmouth = Station::new("Tidmouth");
+    let mut brendam_docks = Station::new("Brendam Docks");
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -469,44 +560,29 @@ fn main() {
     let cargo6 = Cargo { item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
     let cargo7 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
 
-
-    
-
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
     let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
     let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
-    let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),};
+    let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),}; 
     let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Faden")),};
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
+    let tidmouth_incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
 
-    let incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
 
-
-    for car in incoming_cars {
+    for car in tidmouth_incoming_cars {
         let car_id = car.id;
-        match yard.receive_car(car) {
+        match tidmouth.yard.receive_car(car) {
             Ok(_) => println!("Car {} successfully received into the yard.", car_id),
             Err((homeless_car, error)) => {
                 println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
-                yard.purgatory.push(homeless_car);
+                let rejected_asset = RejectedAsset::new(homeless_car, error, 0, None); // We can fill in the timestamp and source_mission later when we implement those features.
+                tidmouth.yard.purgatory.push(rejected_asset);
             }
         }
     }
 
-    
-    // for car in incoming_cars {
-    //     if let Err((homeless_car, error)) = yard.receive_car(car) {
-    //         println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-    //         yard.purgatory.push(homeless_car);
-    //     }
-    // }
-
-    // if let Err((homeless_car, error)) = yard.receive_car(carriage) {
-    //     println!("Intake failed for Car {}: {:?}", homeless_car.id, error);
-    //     yard.purgatory.push(homeless_car);
-    // }
 
     let engine4 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 2000.0 };
@@ -517,24 +593,21 @@ fn main() {
 
 
     //Switched it up to intentionally block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, we should see the roundhouse skip it and move on to the next option in the roster, which is the Gordon.
-    roundhouse.house(engine1);
-    roundhouse.house(engine4);
-    roundhouse.house(engine3);
-    roundhouse.house(engine2);
-    roundhouse.house(engine5);
+    tidmouth.roundhouse.house(engine1);
+    tidmouth.roundhouse.house(engine4);
+    tidmouth.roundhouse.house(engine3);
+    tidmouth.roundhouse.house(engine2);
+    tidmouth.roundhouse.house(engine5);
 
     
-    yard.print_report(&roundhouse);
+    tidmouth.yard.print_report(&tidmouth.roundhouse);
+    brendam_docks.yard.print_report(&brendam_docks.roundhouse);
 
-
-
-    // println!("{BOLD}{YELLOW}--- MISSION DISPATCH: REQUESTING A GORDON ---{RESET}");
-    // let car_ids = vec![1, 2, 3]; // Requesting the specific cars we just added
-    // //let car_ids = vec![1, 2, 3, 7]; // Intentional Failure Check
-    // let engine_req: EngineType = EngineType::Gordon; // passes (just about everything)
-    // //let engine_req: EngineType = EngineType::Percy; // intentional failure check
     
-    // match yard.assemble_train(&mut roundhouse, engine_req, car_ids) {
+    let mission1: Mission = Mission { id: 1, destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6], distance_km: 250 };
+
+
+    // match tidmouth_yard.assemble_train(&mut tidmouth_roundhouse, engine_req, car_ids) {
     //     Ok(mut new_train) => {
     //         println!("{GREEN}Success! Train {} assembled with Engine {}.{RESET}", new_train.id, new_train.engine.id);
     //         new_train.dispatch().ok();
@@ -543,26 +616,25 @@ fn main() {
     //     Err(e) => println!("{RED}Assembly Failed: {:?}{RESET}", e),
     // }
 
-    match yard.assemble_train(&mut roundhouse, &mission1) {
+
+    match tidmouth.dispatch_train(&mission1) {
         Ok(mut new_train) => {
-            println!("{GREEN}Success! Train {} assembled with Engine {}.{RESET}", new_train.id, new_train.engine.id);
-            new_train.dispatch().ok();
-            yard.trains.push(new_train); // Add to active missions
-        },
-        Err(TrainError::DuplicateId(id)) => println!("{RED}Assembly Failed: Duplicate ID {}{RESET}", id),
-        Err(TrainError::AssemblyFailed { missing_car_ids, engine_returned }) => {
-            println!("{RED}Assembly Failed: Missing Car IDs {:?}. Engine {} returned to roundhouse.{RESET}", missing_car_ids, engine_returned);
-            // The following comment will be 'deprecated' right, Polaris: Here we could also add logic to return the engine to the roundhouse if it was already pulled, and to return any cars that were already removed from the yard back to their lockers, but for now we'll just print the error message.
-        },
-        Err(TrainError::MissionImpossible { reason }) => println!("{RED}Assembly Failed: Mission Impossible - {reason}{RESET}"),
-        Err(TrainError::ContrabandOnBoard(reason)) => println!("{RED}Assembly Failed: Contraband Detected - {reason}{RESET}"),
-        Err(e) => println!("{RED}Assembly Failed: {:?}{RESET}", e),
+            if let Ok(_) = new_train.dispatch() {
+                println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission1.id, new_train.id, mission1.destination);
+                brendam_docks.receive_train(new_train); // The train arrives at the destination station, which triggers the disassembly process.
+            }
+        }
+        Err(e) => println!("{RED}Mission to {} from {} failed to dispatch: {:?}{RESET}", mission1.destination, tidmouth.name, e),
     }
 
-    yard.print_report(&roundhouse);
 
+    tidmouth.yard.print_report(&tidmouth.roundhouse);
+
+    // let completed_train = tidmouth.yard.trains.pop().unwrap(); // We can safely unwrap here because we know we just added a train to the active missions
+    // tidmouth.yard.disassemble_train(completed_train, &mut roundhouse);
 
     
+    brendam_docks.yard.print_report(&brendam_docks.roundhouse);
 
 
 }
