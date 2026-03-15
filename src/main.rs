@@ -1,6 +1,6 @@
+mod models;
 
-
-
+use crate::models::{Cargo, EngineType, TrainError, Engine, TrainCar, Train, Mission, RejectedAsset};
 
 use core::net;
 use std::collections::{HashMap, VecDeque};
@@ -15,57 +15,57 @@ const BOLD: &str = "\x1b[1m";
 // This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
 
 
-#[derive(Debug)]
-struct Cargo{
-    item: String,
-    actual_weight: u32,
-    contraband: Option<String>,
-}
+// #[derive(Debug)]
+// pub struct Cargo{
+//     item: String,
+//     actual_weight: u32,
+//     contraband: Option<String>,
+// }
 
-struct Engine {
-    id: u32,
-    engine_type: EngineType,
-    current_fuel: f32, // Replaces fuel_level
-    //max_fuel: f32,
-}
+// struct Engine {
+//     id: u32,
+//     engine_type: EngineType,
+//     current_fuel: f32, // Replaces fuel_level
+//     //max_fuel: f32,
+// }
 
-#[derive(Debug)]
-struct TrainCar {
-    id: u32,
-    cargo: Option<Cargo>,
-    passenger: Option<String>,
-}
-
-
-struct RejectedAsset {
-    car: TrainCar,
-    issue: TrainError,
-    timestamp: u64, // When did it fail? How to impement this? A counter?
-    source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
-}
-
-impl RejectedAsset {
-    fn new(car: TrainCar, issue: TrainError, timestamp: u64, source_mission: Option<u32>) -> Self {
-        Self { car, issue, timestamp, source_mission }
-    }
-}
+// #[derive(Debug)]
+// struct TrainCar {
+//     id: u32,
+//     cargo: Option<Cargo>,
+//     passenger: Option<String>,
+// }
 
 
+// struct RejectedAsset {
+//     car: TrainCar,
+//     issue: TrainError,
+//     timestamp: u64, // When did it fail? How to impement this? A counter?
+//     source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
+// }
 
-struct Train{
-    id: u32,
-    cars: Vec<TrainCar>,
-    engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
-    distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
-    mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
-}
+// impl RejectedAsset {
+//     fn new(car: TrainCar, issue: TrainError, timestamp: u64, source_mission: Option<u32>) -> Self {
+//         Self { car, issue, timestamp, source_mission }
+//     }
+// }
 
 
-struct Mission {
-    id: u32,
-    destination: String,
-    required_cars: Vec<u32>,
-}
+
+// struct Train{
+//     id: u32,
+//     cars: Vec<TrainCar>,
+//     engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
+//     distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
+//     mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
+// }
+
+
+// struct Mission {
+//     id: u32,
+//     destination: String,
+//     required_cars: Vec<u32>,
+// }
 
 
 
@@ -97,28 +97,28 @@ struct RailwayNetwork {
     stations: HashMap<String, Station>,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
-enum EngineType {
-    Diesel,
-    Thomas,
-    Percy,
-    Gordon,
-}
+// #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
+// pub enum EngineType {
+//     Diesel,
+//     Thomas,
+//     Percy,
+//     Gordon,
+// }
 
-#[derive(Debug)]
-enum TrainError {
-    ContrabandOnBoard(String),
-    DuplicateId(u32),
-    // ... our existing variants ...
-    NoAvailableEngine,
-    AssemblyFailed {
-        missing_car_ids: Vec<u32>,
-        engine_returned: u32,
-    },
-    MissionImpossible {
-        reason: String,
-    },
-}
+// #[derive(Debug)]
+// enum TrainError {
+//     ContrabandOnBoard(String),
+//     DuplicateId(u32),
+//     // ... our existing variants ...
+//     NoAvailableEngine,
+//     AssemblyFailed {
+//         missing_car_ids: Vec<u32>,
+//         engine_returned: u32,
+//     },
+//     MissionImpossible {
+//         reason: String,
+//     },
+// }
 
 // fn check_contraband(cargo: &Cargo) -> Result<String, TrainError> {
 //     match &cargo.contraband {
@@ -128,102 +128,102 @@ enum TrainError {
 // }/testing
 
 
-impl Cargo {
-    // We use &mut self because we are going to "reach in and grab" the item
-    fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
+// impl Cargo {
+//     // We use &mut self because we are going to "reach in and grab" the item
+//     fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
         
-        // .take() effectively "steals" the contraband out of the cargo
-        // and leaves a None in its place.
-        if let Some(seized_item) = self.contraband.take() {
-            println!("{RED}SECURITY: Confiscated '{}' from cargo!{RESET}", seized_item);
+//         // .take() effectively "steals" the contraband out of the cargo
+//         // and leaves a None in its place.
+//         if let Some(seized_item) = self.contraband.take() {
+//             println!("{RED}SECURITY: Confiscated '{}' from cargo!{RESET}", seized_item);
             
-            // We return an Error that OWNS the stolen string.
-            // No references, no lifetimes, no dangling pointers.
-            return Err(TrainError::ContrabandOnBoard(seized_item));
-        }
+//             // We return an Error that OWNS the stolen string.
+//             // No references, no lifetimes, no dangling pointers.
+//             return Err(TrainError::ContrabandOnBoard(seized_item));
+//         }
 
-        Ok(format!("Cargo '{}' is clear and safe.", self.item))
-    }
-}
-
-
-impl TrainCar {
-    fn calculate_cargo_weight(&self) -> u32 {
-        self.cargo
-            .as_ref()
-            .map(|c| c.actual_weight)
-            .unwrap_or(0)
-    }
-
-    /// The 'Definition of Done'. Returns the cargo, leaving the car empty.
-    pub fn unload_cargo(&mut self) -> Option<Cargo> {
-        if let Some(cargo) = &self.cargo {
-            println!("{CYAN}UNLOADING: Car {} is discharging its payload {}.{RESET}", self.id, cargo.item);
-        }
-        self.cargo.take() // The magic of .take() again—ownership moves out!
-    }
-}
+//         Ok(format!("Cargo '{}' is clear and safe.", self.item))
+//     }
+// }
 
 
-impl Engine {
-    /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
-    pub fn calculate_fuel_requirement(&self, weight: u32, distance: u32) -> f32 {
-        let work = weight as f32 * distance as f32;
-        let quotient = self.engine_type.fuel_efficiency() * 500.0;
-        work / quotient
-    }
+// impl TrainCar {
+//     fn calculate_cargo_weight(&self) -> u32 {
+//         self.cargo
+//             .as_ref()
+//             .map(|c| c.actual_weight)
+//             .unwrap_or(0)
+//     }
 
-    pub fn can_complete_mission(&self, weight: u32, distance: u32) -> bool {
-        let needed = self.calculate_fuel_requirement(weight, distance);
+//     /// The 'Definition of Done'. Returns the cargo, leaving the car empty.
+//     pub fn unload_cargo(&mut self) -> Option<Cargo> {
+//         if let Some(cargo) = &self.cargo {
+//             println!("{CYAN}UNLOADING: Car {} is discharging its payload {}.{RESET}", self.id, cargo.item);
+//         }
+//         self.cargo.take() // The magic of .take() again—ownership moves out!
+//     }
+// }
+
+
+// impl Engine {
+//     /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
+//     pub fn calculate_fuel_requirement(&self, weight: u32, distance: u32) -> f32 {
+//         let work = weight as f32 * distance as f32;
+//         let quotient = self.engine_type.fuel_efficiency() * 5000.0;
+//         work / quotient
+//     }
+
+//     pub fn can_complete_mission(&self, weight: u32, distance: u32) -> bool {
+//         let needed = self.calculate_fuel_requirement(weight, distance);
         
-        if needed > self.current_fuel {
-            println!("{RED}Mission Impossible: Engine {} needs {:.1}, has {:.1}{RESET}", self.id, needed, self.current_fuel);
-            false
-        } else {
-            println!("{GREEN}Mission Possible: Engine {} ready!{RESET}", self.id);
-            true
-        }
-    }
+//         if needed > self.current_fuel {
+//             println!("{RED}Mission Impossible: Engine {} needs {:.1}, has {:.1}{RESET}", self.id, needed, self.current_fuel);
+//             false
+//         } else {
+//             println!("{GREEN}Mission Possible: Engine {} ready!{RESET}", self.id);
+//             true
+//         }
+//     }
 
-    pub fn burn_fuel(&mut self, weight: u32, distance: u32) {
-        let needed = self.calculate_fuel_requirement(weight, distance);
-        self.current_fuel -= needed;
-        println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
-    }
-}
+//     pub fn burn_fuel(&mut self, weight: u32, distance: u32) {
+//         let needed = self.calculate_fuel_requirement(weight, distance);
+//         self.current_fuel -= needed;
+//         println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
+//     }
+// }
 
 
-impl Train {
+// impl Train {
     
-    // Notice the &mut self. The train is 'taking damage' (burning fuel).
-    fn dispatch(&mut self) -> Result<(), TrainError> {
-        println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
+//     // Notice the &mut self. The train is 'taking damage' (burning fuel).
+//     fn dispatch(&mut self) -> Result<(), TrainError> {
+//         println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
         
-        // 1. Calculate the final weight
-        let total_weight = self.calculate_cargo_weight();
+//         // 1. Calculate the final weight
+//         let total_weight = self.calculate_cargo_weight();
         
-        // 2. The Consequence
-        self.engine.burn_fuel(total_weight, self.distance_km);
+//         // 2. The Consequence
+//         self.engine.burn_fuel(total_weight, self.distance_km);
         
-        // 3. (Future) We could clear the cars here, simulating that they were delivered!
-        // self.cars.clear(); 
+//         // 3. (Future) We could clear the cars here, simulating that they were delivered!
+//         // self.cars.clear(); 
 
-        Ok(())
-    }
+//         Ok(())
+//     }
 
 
-    fn calculate_cargo_weight(&self) -> u32 {
-        self.cars.iter()
-            .map(|car|{
-                match &car.cargo {
-                    Some(cargo) => cargo.actual_weight,
-                    None => 0,
-                }
-            })
-            .sum()
-    }
+//     fn calculate_cargo_weight(&self) -> u32 {
+//         self.cars.iter()
+//             .map(|car|{
+//                 match &car.cargo {
+//                     Some(cargo) => cargo.actual_weight,
+//                     None => 0,
+//                 }
+//             })
+//             .sum()
+//     }
 
-}
+// }
 
 
 impl Railyard {
@@ -756,40 +756,38 @@ fn main() {
 
 
 
-impl EngineType {
-    pub fn max_capacity(&self) -> u32 {
-        match self {
-            EngineType::Percy => 5000,
-            EngineType::Thomas => 15000,
-            EngineType::Gordon => 50000,
-            EngineType::Diesel => 20000,
-        }
-    }
+// impl EngineType {
+//     pub fn max_capacity(&self) -> u32 {
+//         match self {
+//             EngineType::Percy => 5000,
+//             EngineType::Thomas => 15000,
+//             EngineType::Gordon => 50000,
+//             EngineType::Diesel => 20000,
+//         }
+//     }
     
-    pub fn max_fuel_capacity(&self) -> f32 {
-        // Let's assume these units are 'Liters' or 'Kilograms of Coal'
-        match self {
-            EngineType::Percy => 1000.0,
-            EngineType::Thomas => 2000.0,
-            EngineType::Diesel => 3000.0,
-            EngineType::Gordon => 5000.0,
-        }
-    }
+//     pub fn max_fuel_capacity(&self) -> f32 {
+//         // Let's assume these units are 'Liters' or 'Kilograms of Coal'
+//         match self {
+//             EngineType::Percy => 1000.0,
+//             EngineType::Thomas => 2000.0,
+//             EngineType::Diesel => 3000.0,
+//             EngineType::Gordon => 5000.0,
+//         }
+//     }
 
-    pub fn fuel_efficiency(&self) -> f32 {
-        // Higher is better. 
-        // A Diesel might get 5.0 km/kg of fuel per ton.
-        // A Thomas (Steam) might only get 2.5 km/kg.
-        match self {
-            EngineType::Diesel => 5.0, // Devious, but extremely efficient
-            EngineType::Percy => 3.0, //  Smart and efficient, but not the strongest
-            EngineType::Thomas => 2.5, // Classic, Jack of all trades
-            EngineType::Gordon => 1.8, // Powerful, but a gas guzzler
-        }
-    }
-}
-
-
+//     pub fn fuel_efficiency(&self) -> f32 {
+//         // Higher is better. 
+//         // A Diesel might get 5.0 km/kg of fuel per ton.
+//         // A Thomas (Steam) might only get 2.5 km/kg.
+//         match self {
+//             EngineType::Diesel => 0.50, // Devious, but extremely efficient
+//             EngineType::Percy => 0.30, //  Smart and efficient, but not the strongest
+//             EngineType::Thomas => 0.25, // Classic, Jack of all trades
+//             EngineType::Gordon => 0.18, // Powerful, but a gas guzzler
+//         }
+//     }
+// }
 
 
 
@@ -803,7 +801,9 @@ impl EngineType {
 
 
 
-TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::
+
+
+//TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::
 /*
 
 
@@ -836,7 +836,7 @@ TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TODO::TO
 
 
 
-    
+
     pub fn dispatch_train_across_network(&mut self, origin_name: &str, dest_name: &str, mission_id: u32) {
         // 1. Consult the Ledger FIRST.
         let mission = match self.mission_ledger.get(&mission_id) {
