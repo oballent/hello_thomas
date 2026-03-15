@@ -12,61 +12,7 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
-// This program demonstrates the concept of mutable references in Rust using a simple example of train engines and their personalities.
-
-
-// #[derive(Debug)]
-// pub struct Cargo{
-//     item: String,
-//     actual_weight: u32,
-//     contraband: Option<String>,
-// }
-
-// struct Engine {
-//     id: u32,
-//     engine_type: EngineType,
-//     current_fuel: f32, // Replaces fuel_level
-//     //max_fuel: f32,
-// }
-
-// #[derive(Debug)]
-// struct TrainCar {
-//     id: u32,
-//     cargo: Option<Cargo>,
-//     passenger: Option<String>,
-// }
-
-
-// struct RejectedAsset {
-//     car: TrainCar,
-//     issue: TrainError,
-//     timestamp: u64, // When did it fail? How to impement this? A counter?
-//     source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
-// }
-
-// impl RejectedAsset {
-//     fn new(car: TrainCar, issue: TrainError, timestamp: u64, source_mission: Option<u32>) -> Self {
-//         Self { car, issue, timestamp, source_mission }
-//     }
-// }
-
-
-
-// struct Train{
-//     id: u32,
-//     cars: Vec<TrainCar>,
-//     engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
-//     distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
-//     mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
-// }
-
-
-// struct Mission {
-//     id: u32,
-//     destination: String,
-//     required_cars: Vec<u32>,
-// }
-
+// This program demonstrates the physics of Rust and Networking in the context of a train yard on the Island of Sodor. It models the interactions between trains, engines, cars, cargo, and stations, while also showcasing how ownership and borrowing work in Rust to manage complex state and ensure memory safety. The program also includes a simple representation of a railway network with tracks connecting different stations, allowing for the dispatch and routing of trains across the island. Through this simulation, we can explore how Rust's unique features enable us to build a robust and efficient system that mimics real-world logistics and transportation challenges.
 
 
 struct Railyard {
@@ -96,136 +42,6 @@ struct RailwayNetwork {
     // The network also needs to hold the Stations themselves so it can route trains between them
     stations: HashMap<String, Station>,
 }
-
-// #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
-// pub enum EngineType {
-//     Diesel,
-//     Thomas,
-//     Percy,
-//     Gordon,
-// }
-
-// #[derive(Debug)]
-// enum TrainError {
-//     ContrabandOnBoard(String),
-//     DuplicateId(u32),
-//     // ... our existing variants ...
-//     NoAvailableEngine,
-//     AssemblyFailed {
-//         missing_car_ids: Vec<u32>,
-//         engine_returned: u32,
-//     },
-//     MissionImpossible {
-//         reason: String,
-//     },
-// }
-
-// fn check_contraband(cargo: &Cargo) -> Result<String, TrainError> {
-//     match &cargo.contraband {
-//         Some(item) => Err(TrainError::ContrabandOnBoard(item.clone())), // We clone the string here to avoid taking ownership of it. This way, we can still use the original cargo object later if we need to.
-//         None => Ok(String::from("No contraband detected in this cargo!")),
-//     }
-// }/testing
-
-
-// impl Cargo {
-//     // We use &mut self because we are going to "reach in and grab" the item
-//     fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
-        
-//         // .take() effectively "steals" the contraband out of the cargo
-//         // and leaves a None in its place.
-//         if let Some(seized_item) = self.contraband.take() {
-//             println!("{RED}SECURITY: Confiscated '{}' from cargo!{RESET}", seized_item);
-            
-//             // We return an Error that OWNS the stolen string.
-//             // No references, no lifetimes, no dangling pointers.
-//             return Err(TrainError::ContrabandOnBoard(seized_item));
-//         }
-
-//         Ok(format!("Cargo '{}' is clear and safe.", self.item))
-//     }
-// }
-
-
-// impl TrainCar {
-//     fn calculate_cargo_weight(&self) -> u32 {
-//         self.cargo
-//             .as_ref()
-//             .map(|c| c.actual_weight)
-//             .unwrap_or(0)
-//     }
-
-//     /// The 'Definition of Done'. Returns the cargo, leaving the car empty.
-//     pub fn unload_cargo(&mut self) -> Option<Cargo> {
-//         if let Some(cargo) = &self.cargo {
-//             println!("{CYAN}UNLOADING: Car {} is discharging its payload {}.{RESET}", self.id, cargo.item);
-//         }
-//         self.cargo.take() // The magic of .take() again—ownership moves out!
-//     }
-// }
-
-///testing
-/// 
-// impl Engine {
-//     /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
-//     pub fn calculate_fuel_requirement(&self, weight: u32, distance: u32) -> f32 {
-//         let work = weight as f32 * distance as f32;
-//         let quotient = self.engine_type.fuel_efficiency() * 5000.0;
-//         work / quotient
-//     }
-
-//     pub fn can_complete_mission(&self, weight: u32, distance: u32) -> bool {
-//         let needed = self.calculate_fuel_requirement(weight, distance);
-        
-//         if needed > self.current_fuel {
-//             println!("{RED}Mission Impossible: Engine {} needs {:.1}, has {:.1}{RESET}", self.id, needed, self.current_fuel);
-//             false
-//         } else {
-//             println!("{GREEN}Mission Possible: Engine {} ready!{RESET}", self.id);
-//             true
-//         }
-//     }
-
-//     pub fn burn_fuel(&mut self, weight: u32, distance: u32) {
-//         let needed = self.calculate_fuel_requirement(weight, distance);
-//         self.current_fuel -= needed;
-//         println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
-//     }
-// }
-
-
-// impl Train {
-    
-//     // Notice the &mut self. The train is 'taking damage' (burning fuel).
-//     fn dispatch(&mut self) -> Result<(), TrainError> {
-//         println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
-        
-//         // 1. Calculate the final weight
-//         let total_weight = self.calculate_cargo_weight();
-        
-//         // 2. The Consequence
-//         self.engine.burn_fuel(total_weight, self.distance_km);
-        
-//         // 3. (Future) We could clear the cars here, simulating that they were delivered!
-//         // self.cars.clear(); 
-
-//         Ok(())
-//     }
-
-
-//     fn calculate_cargo_weight(&self) -> u32 {
-//         self.cars.iter()
-//             .map(|car|{
-//                 match &car.cargo {
-//                     Some(cargo) => cargo.actual_weight,
-//                     None => 0,
-//                 }
-//             })
-//             .sum()
-//     }
-
-// }
-
 
 impl Railyard {
     
@@ -394,23 +210,12 @@ impl Railyard {
         let engine = roundhouse.find_suitable_engine(total_weight, dist)
             .ok_or(TrainError::NoAvailableEngine)?;
 
-        // let actual_capacity = roundhouse.stalls.get(&engine_req)
-        //     .and_then(|queue| queue.front()) // Peek at reference to the next engine of the requested type
-        //     .map(|engine| engine.current_capacity()) // Check its current capacity
-        //     .unwrap_or(0); // If no engines of that type are available, treat as zero capacity
-
-        // 1. Take ownership of the power
+        // 1. Take ownership of the power // Gathering the payload: We have already confirmed that all requested cars exist and that the engine can handle the weight, 
 
         //MOOWAHAHA! Functional programming style is all mine! (for now, with Google's Gemini's and Copilot's help...)
         let attached_cars = car_ids.iter()
             .filter_map(|id| self.cars.remove(id)) // Try to take ownership of each requested car: returns Option<TrainCar>
             .collect(); // Collect the successfully removed cars into a Vec<TrainCar>
-
-        // Gathering the payload: We have already confirmed that all requested cars exist and that the engine can handle the weight, so now we can take ownership of the cars and move them into the train. If any car is missing at this point, it means something went wrong with our earlier checks, and we will need to roll back by returning any cars we did find and returning the engine to the roundhouse.
-        // for id in &car_ids {
-        //     let car = self.cars.remove(id).unwrap(); // We can safely unwrap here because we already checked for missing cars
-        //     attached_cars.push(car);
-        // }
 
         Ok(Train {
             id: self.generate_new_id(),
@@ -682,7 +487,7 @@ fn main() {
             }
         }
 
-        //Switched it up to intentionally block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, we should see the roundhouse skip it and move on to the next option in the roster, which is the Gordon.
+        //Switched it up to intentionally block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
         tidmouth.roundhouse.house(engine1);
         tidmouth.roundhouse.house(engine4);
         tidmouth.roundhouse.house(engine3);
@@ -754,41 +559,6 @@ fn main() {
 
 
 }
-
-
-
-// impl EngineType {
-//     pub fn max_capacity(&self) -> u32 {
-//         match self {
-//             EngineType::Percy => 5000,
-//             EngineType::Thomas => 15000,
-//             EngineType::Gordon => 50000,
-//             EngineType::Diesel => 20000,
-//         }
-//     }
-    
-//     pub fn max_fuel_capacity(&self) -> f32 {
-//         // Let's assume these units are 'Liters' or 'Kilograms of Coal'
-//         match self {
-//             EngineType::Percy => 1000.0,
-//             EngineType::Thomas => 2000.0,
-//             EngineType::Diesel => 3000.0,
-//             EngineType::Gordon => 5000.0,
-//         }
-//     }
-
-//     pub fn fuel_efficiency(&self) -> f32 {
-//         // Higher is better. 
-//         // A Diesel might get 5.0 km/kg of fuel per ton.
-//         // A Thomas (Steam) might only get 2.5 km/kg.
-//         match self {
-//             EngineType::Diesel => 0.50, // Devious, but extremely efficient
-//             EngineType::Percy => 0.30, //  Smart and efficient, but not the strongest
-//             EngineType::Thomas => 0.25, // Classic, Jack of all trades
-//             EngineType::Gordon => 0.18, // Powerful, but a gas guzzler
-//         }
-//     }
-// }
 
 
 
