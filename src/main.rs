@@ -188,23 +188,28 @@ impl Railyard {
 
         // We extract the data we need from the mission
         let car_ids = &mission.required_cars;
+        let mut missing_ids = Vec::new(); // Create a ledger for failures
 
         // We actually infer what type of engine we will need from the car_ids and their cargo weights.
         //calculate total weight of requested cars and check for missing cars before taking ownership of the engine. If any car is missing or if the total weight exceeds the engine's capacity, we can return an error without having to worry about returning the engine or any cars we might have already taken ownership of.
         let mut total_weight = 0;
         
         for id in car_ids {
-            //We might get rid of this explicit check in the future and just rely on the filter_map and map combinators to do the work for us, but for now we'll keep it like this for clarity and to avoid any potential issues with ownership and borrowing when we move on to taking ownership of the cars and engine later in the function.
             match self.cars.get(id) {
                 Some(car) => total_weight += car.calculate_cargo_weight(),
-                None => Err(TrainError::AssemblyFailed { 
-                    missing_car_ids: vec![*id], 
-                    engine_returned: 0 // No engine pulled yet 
-                })?
+                None => missing_ids.push(*id), // Log it, but keep checking!
             }
         }
 
-        // Now we have the total weight of the requested cars, we can find a suitable engine from the roundhouse.
+        // After checking all cars, IF there are any missing, abort the assembly.
+        if !missing_ids.is_empty() {
+            return Err(TrainError::AssemblyFailed { 
+                missing_car_ids: missing_ids, 
+                engine_returned: 0 
+            });
+        }
+
+        // Now that we have the total weight of the requested cars, we can find a suitable engine from the roundhouse.
     
         // This transforms the Option<Engine> into a Result<Engine, TrainError> on the fly!
         let engine = roundhouse.find_suitable_engine(total_weight, dist)
@@ -242,29 +247,29 @@ impl Railyard {
     // }
 
     pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) {
-    let (engine, cars, _id) = (train.engine, train.cars, train.id); // Destructure the "Gestalt"
+        let (engine, cars, _id) = (train.engine, train.cars, train.id); // Destructure the "Gestalt"
 
-    // 1. Return the Power
-    roundhouse.house(engine);
+        // 1. Return the Power
+        roundhouse.house(engine);
 
-    // 2. Process the Cars
-    for mut car in cars {
-        // Step A: The Security Gate & Intake
-        // This handles contraband and duplicate ID checks.
-        let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
-        if let Ok(_) = self.receive_car(car) {
-            // Step B: Fulfillment
-            // Now that the car is safely in the yard's HashMap, 
-            // we can reach in and "deliver" the goods.
-            if let Some(mut car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
-                 let payload = car_in_yard.unload_cargo();
-                 // Future: Send 'payload' to Warehouse
+        // 2. Process the Cars
+        for mut car in cars {
+            // Step A: The Security Gate & Intake
+            // This handles contraband and duplicate ID checks.
+            let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
+            if let Ok(_) = self.receive_car(car) {
+                // Step B: Fulfillment
+                // Now that the car is safely in the yard's HashMap, 
+                // we can reach in and "deliver" the goods.
+                if let Some(mut car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
+                    let payload = car_in_yard.unload_cargo();
+                    // Future: Send 'payload' to Warehouse
+                }
+            } else {
+                // receive_car already handles Purgatory internally in your current code.
             }
-        } else {
-            // receive_car already handles Purgatory internally in your current code.
         }
     }
-}
 
 }   
 
@@ -388,14 +393,6 @@ impl RailwayNetwork {
     /// Allows the global environment (main) to temporarily borrow a station to mutate it.
     pub fn get_mut_station(&mut self, name: &str) -> Option<&mut Station> {
         self.stations.get_mut(name)
-    }
-
-    pub fn dispatch_mission(&mut self, origin_name: &str, mission: &Mission, dist: u32) -> Result<Train, TrainError> {
-        if let Some(station) = self.get_mut_station(origin_name) {
-            station.dispatch_train(mission, dist)
-        } else {
-            Err(TrainError::MissionImpossible { reason: format!("Origin station '{}' not found in the network.", origin_name) })
-        }
     }
 
     pub fn dispatch_train_across_network(&mut self, origin_name: &str, dest_name: &str, mission: &Mission) {
