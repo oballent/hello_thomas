@@ -1,3 +1,5 @@
+use core::time;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -223,7 +225,13 @@ pub struct RejectedAsset {
 
 
 impl RejectedAsset {
-    pub fn new(car: TrainCar, issue: TrainError, timestamp: u64, source_mission: Option<u32>) -> Self {
-        Self { car, issue, timestamp, source_mission }
+    pub fn new(car: TrainCar, issue: TrainError, source_mission: Option<u32>) -> Self {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        Self {
+            car,
+            issue,
+            timestamp,
+            source_mission,
+        }
     }
 }

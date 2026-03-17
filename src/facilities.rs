@@ -102,7 +102,7 @@ impl Railyard {
 
     pub fn receive_car(&mut self, mut car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
         // 1. Explicit Check: No duplicate IDs
-        if self.cars.contains_key(&car.id) {
+        if self.cars.contains_key(&car.id) || self.purgatory.iter().any(|asset| asset.car.id == car.id) { // tell me about the .any operator please, Copilot. .any() is a method that checks if any element in the iterator satisfies a given condition. In this case, we're using it to check if any car in purgatory has the same ID as the incoming car. If it finds a match, it returns true, which means we have a duplicate ID situation. This is important because we want to prevent two different cars from having the same ID in our system, which could cause confusion and errors down the line.
             println!("{RED}Railyard Error: Car ID {} is a duplicate!{RESET}", car.id);
             let car_id = car.id;
             return Err((car, TrainError::DuplicateId(car_id)));
@@ -151,7 +151,7 @@ impl Railyard {
 
             if let Err((car, error)) = self.receive_car(car) {
                 println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
-                let rejected_asset: RejectedAsset = RejectedAsset::new(car, error, 0, train.mission_id); // We can fill in the timestamp and source_mission later when we implement those features.
+                let rejected_asset: RejectedAsset = RejectedAsset::new(car, error, train.mission_id); // We can fill in the timestamp and source_mission later when we implement those features.
                 self.purgatory.push(rejected_asset);
             }
 
@@ -364,7 +364,7 @@ impl Station {
             Ok(_) => println!("Car {} successfully received into the yard.", car_id),
             Err((homeless_car, error)) => {
                 println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
-                let rejected_asset = RejectedAsset::new(homeless_car, error, 0, None); // We can fill in the timestamp and source_mission later when we implement those features.
+                let rejected_asset = RejectedAsset::new(homeless_car, error, None); // We can fill in the timestamp and source_mission later when we implement those features.
                 self.yard.purgatory.push(rejected_asset);
             }
         }

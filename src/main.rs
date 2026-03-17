@@ -42,23 +42,23 @@ fn main() {
     let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
     let cargo5 = Cargo { item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
     let cargo6 = Cargo { item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
-    let cargo7 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
+    let cargo7 = Cargo { item: String::from("Declassified Documents"), actual_weight: 11001, contraband: None };
 
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
     let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
     let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
     let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),}; 
-    let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Faden")),};
+    let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Mathison")),};
     let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
     let tidmouth_incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
 
 
-    let engine4 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
+    let engine1 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 2000.0 };
     let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 500.0 };
-    let engine1 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 500.0 };
+    let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 500.0 };
     let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
 
 
@@ -68,9 +68,9 @@ fn main() {
             origin.receive_car(car)
         }
 
-        //Switched it up to intentionally block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
-        origin.house_engine(engine1);
+        //Block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel (id: 1) Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
         origin.house_engine(engine4);
+        origin.house_engine(engine1);
         origin.house_engine(engine3);
         origin.house_engine(engine2);
         origin.house_engine(engine5);
