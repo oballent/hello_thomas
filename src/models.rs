@@ -208,6 +208,7 @@ impl Train {
 
 pub struct Mission {
     pub id: u32,
+    pub origin: String,
     pub destination: String,
     pub required_cars: Vec<u32>,
 }

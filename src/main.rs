@@ -183,17 +183,12 @@ impl Railyard {
         }
     }
 
-
-    pub fn assemble_train(&mut self, roundhouse: &mut Roundhouse, mission: &Mission /* <--- We take a reference to the work order */, dist: u32) -> Result<Train, TrainError> {
-
+    pub fn get_total_cargo_weight(&self, mission: &Mission) -> Result<u32, TrainError> {
         // We extract the data we need from the mission
         let car_ids = &mission.required_cars;
         let mut missing_ids = Vec::new(); // Create a ledger for failures
-
-        // We actually infer what type of engine we will need from the car_ids and their cargo weights.
-        //calculate total weight of requested cars and check for missing cars before taking ownership of the engine. If any car is missing or if the total weight exceeds the engine's capacity, we can return an error without having to worry about returning the engine or any cars we might have already taken ownership of.
         let mut total_weight = 0;
-        
+
         for id in car_ids {
             match self.cars.get(id) {
                 Some(car) => total_weight += car.calculate_cargo_weight(),
@@ -201,35 +196,31 @@ impl Railyard {
             }
         }
 
-        // After checking all cars, IF there are any missing, abort the assembly.
         if !missing_ids.is_empty() {
             return Err(TrainError::AssemblyFailed { 
                 missing_car_ids: missing_ids, 
                 engine_returned: 0 
             });
         }
+        else {
+            Ok(total_weight)
+        }
+    }
 
-        // Now that we have the total weight of the requested cars, we can find a suitable engine from the roundhouse.
-    
-        // This transforms the Option<Engine> into a Result<Engine, TrainError> on the fly!
-        let engine = roundhouse.find_suitable_engine(total_weight, dist)
-            .ok_or(TrainError::NoAvailableEngine)?;
 
+    pub fn assemble_cars(&mut self, mission: &Mission /* <--- We take a reference to the work order */) -> Result<Vec<TrainCar>, TrainError> {
+
+        let car_ids = &mission.required_cars;
+        
         // 1. Take ownership of the power // Gathering the payload: We have already confirmed that all requested cars exist and that the engine can handle the weight, 
 
-        //MOOWAHAHA! Functional programming style is all mine! (for now, with Google's Gemini's and Copilot's help...)
-        let attached_cars = car_ids.iter()
-            .filter_map(|id| self.cars.remove(id)) // Try to take ownership of each requested car: returns Option<TrainCar>
-            .collect(); // Collect the successfully removed cars into a Vec<TrainCar>
+        //MOOWAHAHA! Functional programming style are belong to me! (with Copilot's and Gemini's help of course)
+        let attached_cars: Vec<TrainCar> = car_ids.iter()
+            // We use .unwrap() fearlessly because the prior loop guarantees existence.
+            .map(|id| self.cars.remove(id).unwrap()) 
+            .collect();
 
-        Ok(Train {
-            id: self.generate_new_id(),
-            engine,
-            cars: attached_cars,
-            distance_km: dist,
-            mission_id: Some(mission.id),
-        })
-
+        Ok(attached_cars)
     }
 
     // fn disassemble_train(&mut self, train:Train, roundhouse:&mut Roundhouse){
@@ -344,10 +335,52 @@ impl Station {
         }
     }
 
-    // Notice we pass the Station's own internal roundhouse to the yard.
-    pub fn dispatch_train(&mut self, mission: &Mission, dist: u32) -> Result<Train, TrainError> {
+
+    pub fn assemble_and_dispatch(&mut self, mission: &Mission, distance: u32) -> Result<Train, TrainError> {
         println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", self.name, mission.id);
-        self.yard.assemble_train(&mut self.roundhouse, mission, dist)
+
+        let required_ids = &mission.required_cars;
+
+        //1/ We can combine the inventory check and weight calculation into a single method in the yard for cleaner code and better separation of concerns.
+        let total_weight = self.yard.get_total_cargo_weight(mission)?;
+
+
+        // 2. Ask the Roundhouse for an Engine (Mutable, as we remove it)
+        let engine = self.roundhouse.find_suitable_engine(total_weight, distance)
+            .ok_or(TrainError::NoAvailableEngine)?;
+
+        // 3. Command the Yard to extract the cars (Mutable, as we remove them)
+        // Since we already proved they exist in Step 1, we can fearlessly unwrap.
+        let attached_cars: Vec<TrainCar> = self.yard.assemble_cars(mission)?; // This will also return an error if something goes wrong during the actual assembly process, which is a nice safety net.
+
+        // 4. The Station builds the Gestalt
+        let train = Train {
+            id: self.yard.generate_new_id(), // Station asks Yard for a tracking ID
+            engine,
+            cars: attached_cars,
+            distance_km: distance,
+            mission_id: Some(mission.id),
+        };
+
+        Ok(train)
+    }
+
+    pub fn receive_car(&mut self, car: TrainCar) {
+        
+            let car_id = car.id;
+        match self.yard.receive_car(car) {
+            Ok(_) => println!("Car {} successfully received into the yard.", car_id),
+            Err((homeless_car, error)) => {
+                println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
+                let rejected_asset = RejectedAsset::new(homeless_car, error, 0, None); // We can fill in the timestamp and source_mission later when we implement those features.
+                self.yard.purgatory.push(rejected_asset);
+            }
+        }
+    }
+
+    pub fn house_engine(&mut self, engine: Engine) {
+        println!("Roundhouse: Housing Engine {} of type {:?}.", engine.id, engine.engine_type);
+        self.roundhouse.house(engine);
     }
 
     pub fn receive_train(&mut self, train: Train) {
@@ -395,11 +428,11 @@ impl RailwayNetwork {
         self.stations.get_mut(name)
     }
 
-    pub fn dispatch_train_across_network(&mut self, origin_name: &str, dest_name: &str, mission: &Mission) {
+    pub fn dispatch_train_across_network(&mut self, mission: &Mission) {
         // 1. Extract the nodes completely from the network. 
         // The HashMap no longer owns them. WE own them here.
-        let mut origin = self.stations.remove(origin_name).expect("Origin not found");
-        let mut destination = self.stations.remove(dest_name).expect("Destination not found");
+        let mut origin = self.stations.remove(&mission.origin).expect("Origin not found");
+        let mut destination = self.stations.remove(&mission.destination).expect("Destination not found");
 
         // let distance: u32 = self.tracks.get(&(origin.name.clone(), destination.name.clone()))
         //     .copied()
@@ -408,14 +441,16 @@ impl RailwayNetwork {
         // println!("Dispatching mission {} from {} to {} ({} km)", mission_id, origin.name, destination.name, distance);
 
         let distance = self.get_distance(&origin, &destination).unwrap_or(0);
-        println!("Distance from {} to {} is {} km", origin_name, dest_name, distance);
-        if let Ok(mut train) = origin.dispatch_train(mission, distance) {
+        println!("Distance from {} to {} is {} km", origin.name, destination.name, distance);
+        if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {
             if let Ok(_) = train.dispatch() {
-                println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, dest_name);
+                println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, destination.name);
                 destination.receive_train(train); // The train arrives at the destination station, which triggers the disassembly process.
+            } else {
+                println!("{RED}TRAIN NOT RECEIVED:Mission {} from {} to {} failed to dispatch during traversal.{RESET}", mission.id, origin.name, destination.name);
             }
         } else {
-            println!("{RED}Mission {} from {} to {} failed to dispatch.{RESET}", mission.id, origin_name, dest_name);
+            println!("{RED}Mission {} from {} to {} failed to dispatch.{RESET}", mission.id, origin.name, destination.name);
         }
         self.stations.insert(origin.name.clone(), origin); // Return ownership back to the network
         self.stations.insert(destination.name.clone(), destination);
@@ -440,9 +475,6 @@ fn main() {
     network.add_station(brendam_docks);
 
 
-
-
-
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
     let cargo3 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
@@ -462,7 +494,6 @@ fn main() {
     let tidmouth_incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
 
 
-
     let engine4 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 2000.0 };
     let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 500.0 };
@@ -471,59 +502,28 @@ fn main() {
 
 
     let origin_name = String::from("Tidmouth");
-    if let Some(tidmouth) = network.get_mut_station(&origin_name) {
+    if let Some(origin) = network.get_mut_station(&origin_name) {
         for car in tidmouth_incoming_cars {
-            let car_id = car.id;
-            match tidmouth.yard.receive_car(car) {
-                Ok(_) => println!("Car {} successfully received into the yard.", car_id),
-                Err((homeless_car, error)) => {
-                    println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
-                    let rejected_asset = RejectedAsset::new(homeless_car, error, 0, None); // We can fill in the timestamp and source_mission later when we implement those features.
-                    tidmouth.yard.purgatory.push(rejected_asset);
-                }
-            }
+            origin.receive_car(car)
         }
 
         //Switched it up to intentionally block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
-        tidmouth.roundhouse.house(engine1);
-        tidmouth.roundhouse.house(engine4);
-        tidmouth.roundhouse.house(engine3);
-        tidmouth.roundhouse.house(engine2);
-        tidmouth.roundhouse.house(engine5);
+        origin.house_engine(engine1);
+        origin.house_engine(engine4);
+        origin.house_engine(engine3);
+        origin.house_engine(engine2);
+        origin.house_engine(engine5);
 
-        
-        // match tidmouth.dispatch_train(&mission1) {
-        //     Ok(mut new_train) => {
-        //         if let Ok(_) = new_train.dispatch() {
-        //             println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission1.id, new_train.id, mission1.destination);
-        //             brendam_docks.receive_train(new_train); // The train arrives at the destination station, which triggers the disassembly process.
-        //         }
-        //     }
-        //     Err(e) => println!("{RED}Mission to {} from {} failed to dispatch: {:?}{RESET}", mission1.destination, tidmouth.name, e),
-        // }
-
-        
-    tidmouth.yard.print_report(&tidmouth.roundhouse);
+        origin.print_status();
 
     } else {
         println!("Error: {} station not found in the network!", origin_name);
     }
 
 
-    let mission1 = Mission { id: 1, destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6] };
+    let mission1: Mission = Mission { id: 1, origin: String::from("Tidmouth"), destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6] };
 
-    network.dispatch_train_across_network("Tidmouth", "Brendam Docks", &mission1);
-
-    // if let Some(tidmouth) = network.get_mut_station("Tidmouth") {
-    //     if let Some(brendam_docks) = network.get_mut_station("Brendam Docks") {
-    //         println!("{BOLD}{CYAN}--- Dispatching Mission {} from {} to {} ---{RESET}", mission1.id, tidmouth.name, brendam_docks.name);
-    //         network.dispatch_train_across_network(&tidmouth.name, &brendam_docks.name, &mission1);
-    //     } else {
-    //         println!("Error: Brendam Docks station not found in the network!");
-    //     }
-    // } else {
-    //     println!("Error: Tidmouth station not found in the network!");
-    // }
+    network.dispatch_train_across_network(&mission1);
 
     if let Some(tidmouth) = network.get_mut_station("Tidmouth"){
         tidmouth.print_status();
@@ -531,29 +531,6 @@ fn main() {
     if let Some(brendam_docks) = network.get_mut_station("Brendam Docks"){
         brendam_docks.print_status();
     }
-
-    // tidmouth.yard.print_report(&tidmouth.roundhouse);
-    // brendam_docks.yard.print_report(&brendam_docks.roundhouse);
-
-    
-    // match tidmouth_yard.assemble_train(&mut tidmouth_roundhouse, engine_req, car_ids) {
-    //     Ok(mut new_train) => {
-    //         println!("{GREEN}Success! Train {} assembled with Engine {}.{RESET}", new_train.id, new_train.engine.id);
-    //         new_train.dispatch().ok();
-    //         yard.trains.push(new_train); // Add to active missions
-    //     },
-    //     Err(e) => println!("{RED}Assembly Failed: {:?}{RESET}", e),
-    // }
-
-
-
-
-    // let completed_train = tidmouth.yard.trains.pop().unwrap(); // We can safely unwrap here because we know we just added a train to the active missions
-    // tidmouth.yard.disassemble_train(completed_train, &mut roundhouse);
-
-    
-    // brendam_docks.yard.print_report(&brendam_docks.roundhouse);
-
 
 }
 
