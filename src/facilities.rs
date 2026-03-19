@@ -100,12 +100,15 @@ impl Railyard {
     }
 
 
-    pub fn receive_car(&mut self, mut car: TrainCar) -> Result<(), (TrainCar, TrainError)> {
+    pub fn receive_car(&mut self, mut car: TrainCar) -> Result<(), (TrainCar, Vec<TrainError>)> {
+
+        let mut issues = Vec::<TrainError>::new();
+
         // 1. Explicit Check: No duplicate IDs
         if self.cars.contains_key(&car.id) || self.purgatory.iter().any(|asset| asset.car.id == car.id) { // tell me about the .any operator please, Copilot. .any() is a method that checks if any element in the iterator satisfies a given condition. In this case, we're using it to check if any car in purgatory has the same ID as the incoming car. If it finds a match, it returns true, which means we have a duplicate ID situation. This is important because we want to prevent two different cars from having the same ID in our system, which could cause confusion and errors down the line.
             println!("{RED}Railyard Error: Car ID {} is a duplicate!{RESET}", car.id);
             let car_id = car.id;
-            return Err((car, TrainError::DuplicateId(car_id)));
+            issues.push(TrainError::DuplicateId(car_id));
         }
 
         // 2. The Confiscation Check (The Security Gate)
@@ -115,14 +118,20 @@ impl Railyard {
             if let Err(e) = cargo.check_and_confiscate() {
                 // If the cargo returns a Contraband error, we reject the whole car
                 println!("{RED}SECURITY ALERT: Car {} contained illegal goods! Moving to Purgatory.{RESET}", car.id);
-                return Err((car, e)); 
+                issues.push(e);
             }
         }
 
-        // 3. Success: The state change is clear
-        println!("{GREEN}Railyard: Car {} safely docked in locker.{RESET}", car.id);
-        self.cars.insert(car.id, car);
-        Ok(())
+        if issues.is_empty() {
+            // 3. Success: The state change is clear
+            println!("{GREEN}Railyard: Car {} safely docked in locker.{RESET}", car.id);
+            self.cars.insert(car.id, car);
+            Ok(())
+        }
+        else {
+            // 4. Failure: We return the car and the ledger of issues for transparency and debugging.
+            Err((car, issues))
+        }
     }
 
 
@@ -146,12 +155,13 @@ impl Railyard {
     }
 
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
+        let mut issues = Vec::<TrainError>::new();
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
 
-            if let Err((car, error)) = self.receive_car(car) {
-                println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
-                let rejected_asset: RejectedAsset = RejectedAsset::new(car, error, train.mission_id); // We can fill in the timestamp and source_mission later when we implement those features.
+            if let Err((car, issues)) = self.receive_car(car) {
+                println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, issues);
+                let rejected_asset: RejectedAsset = RejectedAsset::new(car, issues, train.mission_id); // We can fill in the timestamp and source_mission later when we implement those features.
                 self.purgatory.push(rejected_asset);
             }
 
@@ -185,20 +195,43 @@ impl Railyard {
     }
 
 
-    pub fn assemble_cars(&mut self, mission: &Mission /* <--- We take a reference to the work order */) -> Result<Vec<TrainCar>, TrainError> {
-
+    pub fn assemble_cars(&mut self, mission: &Mission) -> Result<Vec<TrainCar>, TrainError> {
         let car_ids = &mission.required_cars;
         
-        // 1. Take ownership of the power // Gathering the payload: We have already confirmed that all requested cars exist and that the engine can handle the weight, 
-
-        //MOOWAHAHA! Functional programming style are belong to me! (with Copilot's and Gemini's help of course)
+        // We use .unwrap() fearlessly because the Station already guaranteed existence with get_total_cargo_weight()! If we made it here, we know all the cars exist, so any failure at this point would be a critical error that should panic the system, because it means our internal state is inconsistent. By using .unwrap(), we allow such a critical error to surface immediately during development/testing, rather than silently failing or returning an error that we didn't expect to have to handle.
+        // This is much faster and doesn't require complex rollback logic.
         let attached_cars: Vec<TrainCar> = car_ids.iter()
-            // We use .unwrap() fearlessly because the prior loop guarantees existence.
-            .map(|id| self.cars.remove(id).unwrap()) 
+            .map(|id| self.cars.remove(id).expect("Inventory validation failed prior to assembly")) 
             .collect();
 
         Ok(attached_cars)
     }
+
+    // pub fn assemble_cars(&mut self, mission: &Mission) -> Result<Vec<TrainCar>, TrainError> {
+    //     let car_ids = &mission.required_cars;
+    
+    //     // Attempt all removals, collecting failures without mutating on partial success
+    //     let mut attached_cars = Vec::with_capacity(car_ids.len());
+    //     let mut missing = Vec::new();
+    
+    //     for id in car_ids {
+    //         match self.cars.remove(id) {
+    //             Some(car) => attached_cars.push(car),
+    //             None => missing.push(*id),
+    //         }
+    //     }
+    
+    //     if !missing.is_empty() {
+    //         // Re-insert any cars we already pulled, rolling back the partial mutation. Let's do it!
+    //         for car in attached_cars {
+    //             self.cars.insert(car.id, car);
+    //         }
+    //         // (in a real async system you'd want a transaction, but this is the spirit)
+    //         return Err(TrainError::AssemblyFailed { missing_car_ids: missing, engine_returned: 0 });
+    //     }
+    
+    //     Ok(attached_cars)
+    // }
 
     // fn disassemble_train(&mut self, train:Train, roundhouse:&mut Roundhouse){
     //     let engine = train.engine;
@@ -214,13 +247,14 @@ impl Railyard {
     //     }
     // }
 
-    pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) {
+    pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) -> Result<Vec<Cargo>, TrainError> {
         let (engine, cars, _id) = (train.engine, train.cars, train.id); // Destructure the "Gestalt"
 
         // 1. Return the Power
         roundhouse.house(engine);
 
         // 2. Process the Cars
+        let mut returned_cargo = Vec::new();
         for mut car in cars {
             // Step A: The Security Gate & Intake
             // This handles contraband and duplicate ID checks.
@@ -232,11 +266,18 @@ impl Railyard {
                 if let Some(mut car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
                     let payload = car_in_yard.unload_cargo();
                     // Future: Send 'payload' to Warehouse
+                    if let Some(cargo) = payload {
+                        println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", _id, cargo.item, car_id_we_just_received);
+                        returned_cargo.push(cargo);
+                    } else {
+                        println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", _id, car_id_we_just_received);
+                    }
                 }
             } else {
-                // receive_car already handles Purgatory internally in your current code.
+                // receive_car already handles Purgatory internally in our current code.
             }
         }
+        Ok(returned_cargo)
     }
 
 }   
@@ -310,9 +351,40 @@ impl Roundhouse {
 
 
 
+
+pub struct Warehouse {
+    pub inventory: Vec<Cargo>,
+}
+
+impl Warehouse {
+    pub fn new() -> Self {
+        Warehouse {
+            inventory: Vec::new(),
+        }
+    }
+
+    pub fn store(&mut self, cargo: Cargo) {
+        println!("{BOLD}{YELLOW}Warehouse: Received {} ({}kg) for processing/holding.{RESET}", cargo.item, cargo.actual_weight);
+        self.inventory.push(cargo);
+    }
+
+    pub fn process_outbound(&mut self) {
+        // This represents fulfillment to the "outside world"
+        let fulfilled = self.inventory.len();
+        self.inventory.clear();
+        if fulfilled > 0 {
+            println!("{BOLD}{GREEN}Warehouse: Successfully processed and delivered {} cargo shipments to the outside world.{RESET}", fulfilled);
+        }
+    }
+}
+
+
+
+
 pub struct Station {
     pub name: String,
     pub yard: Railyard,
+    pub warehouse: Warehouse,
     pub roundhouse: Roundhouse,
 }
 
@@ -323,7 +395,17 @@ impl Station {
         Self {
             name: String::from(name),
             yard: Railyard::new(),
+            warehouse: Warehouse::new(),
             roundhouse: Roundhouse::new(),
+        }
+    }
+
+    pub fn process_ejected_car(&mut self, train: &mut Train, car_id: u32) {
+        if let Some(car) = train.eject_car(car_id) {
+            if let Err((homeless_car, issues)) = self.yard.receive_car(car) {
+                let rejected_asset = RejectedAsset::new(homeless_car, issues, train.mission_id);
+                self.yard.purgatory.push(rejected_asset);
+            }
         }
     }
 
@@ -377,12 +459,30 @@ impl Station {
 
     pub fn receive_train(&mut self, train: Train) {
         println!("{BOLD}{GREEN}[{}] Train {} has arrived. Initiating breakdown.{RESET}", self.name, train.id);
-        self.yard.disassemble_train(train, &mut self.roundhouse);
+        if let Ok(payloads) = self.yard.disassemble_train(train, &mut self.roundhouse) {
+            for cargo in payloads{
+                self.warehouse.store(cargo);
+            }
+        }
     }
     
     // A helper to inspect the local state
-    pub fn print_status(&self) {
-        println!("\n--- STATION REPORT: {} ---", self.name);
+pub fn print_status(&self) {
+        println!("\n{BOLD}{CYAN}=== STATION REPORT: {} ==={RESET}", self.name);
+        
+        // 1. Print Yard & Roundhouse
         self.yard.print_report(&self.roundhouse);
+
+        // 2. Print Warehouse
+        println!("{BOLD}{YELLOW}📦 WAREHOUSE INVENTORY ({}) 📦{RESET}", self.warehouse.inventory.len());
+        if self.warehouse.inventory.is_empty() {
+            println!("    (Warehouse is empty)");
+        } else {
+            for (i, cargo) in self.warehouse.inventory.iter().enumerate() {
+                let contraband_status = if cargo.contraband.is_some() { "[FLAGGED]" } else { "[CLEARED]" };
+                println!("    {}. {} ({}kg) {}", i + 1, cargo.item, cargo.actual_weight, contraband_status);
+            }
+        }
+        println!("{BOLD}{CYAN}======================================{RESET}\n");
     }
 }

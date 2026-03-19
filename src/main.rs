@@ -3,7 +3,7 @@ mod facilities;
 mod network;
 
 use crate::models::{Cargo, EngineType, TrainError, Engine, TrainCar, Train, Mission, RejectedAsset};
-use crate::facilities::{Station, Roundhouse, Railyard,};
+use crate::facilities::{Station, Roundhouse, Railyard, Warehouse};
 use crate::network::RailwayNetwork;
 
 use core::net;
@@ -42,7 +42,7 @@ fn main() {
     let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
     let cargo5 = Cargo { item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
     let cargo6 = Cargo { item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
-    let cargo7 = Cargo { item: String::from("Declassified Documents"), actual_weight: 11001, contraband: None };
+    let cargo7 = Cargo { item: String::from("Declassified Documents"), actual_weight: 11001, contraband: Some(String::from("The Truth")) };
 
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};

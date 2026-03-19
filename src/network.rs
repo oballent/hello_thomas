@@ -44,12 +44,16 @@ impl RailwayNetwork {
     }
 
     pub fn add_mission(&mut self, mission: Mission) {
-        println!("{YELLOW}Network Ledger: Registered Mission {}.{RESET}", mission.id);
+        println!("{YELLOW}Network Ledger: Registering Mission {}.{RESET}", mission.id);
         self.missions.insert(mission.id, mission);
     }
 
-    pub fn get_distance(&self, origin: &Station, destination: &Station) -> Option<u32> {
-        self.tracks.get(&(origin.name.clone(), destination.name.clone())).copied()
+    pub fn get_station(&self, name: &str) -> Option<&Station> {
+        self.stations.get(name)
+    }
+    
+    pub fn get_distance(&self, origin: &String, destination: &String) -> Option<u32> {
+        self.tracks.get(&(origin.clone(), destination.clone())).copied()
     }
 
     /// Allows the global environment (main) to temporarily borrow a station to mutate it.
@@ -66,6 +70,7 @@ impl RailwayNetwork {
         
         // 1. Direct Field Access. 
         // This immutably locks ONLY self.missions. self.stations is still free!
+        // The mission is The Oracle that reveals the metadata we need to perform the dispatch, but it does not have the power to mutate anything itself. It's just a reference to the immutable ledger.
         let mission = match self.missions.get(&mission_id) {
             Some(m) => m,
             None => {
@@ -74,33 +79,34 @@ impl RailwayNetwork {
             }
         };
 
+
+        //1. Do the Stations exist? (Check the Nodes)
+        if !self.stations.contains_key(&mission.origin) {
+            println!("Error: Origin missing."); return;
+        }
+        if !self.stations.contains_key(&mission.destination) {
+            println!("Error: Destination missing."); return;
+        }
+
+        // 2. Does the Route exist? (Check the Edges)
+        let distance = match self.get_distance(&mission.origin, &mission.destination) {
+            Some(d) => d,
+            None => {
+                println!("Error: No track laid between {} and {}.", mission.origin, mission.destination); 
+                return;
+            }
+        };
+
         // We clone the names here because we will need to re-insert the stations later
         // and we cannot move data out of our borrowed mission reference.
         let origin_name = mission.origin.clone();
         let dest_name = mission.destination.clone();
 
-        // 2. Amputate the Origin (mutably borrowing ONLY self.stations)
-        let mut origin = match self.stations.remove(&origin_name) {
-            Some(s) => s,
-            None => {
-                println!("{RED}Network Error: Origin station '{}' not found.{RESET}", origin_name);
-                return;
-            }
-        };
+        // 3. Isolate the Origin (mutably borrowing ONLY self.stations)
+        let mut origin = self.stations.remove(&origin_name).expect("Origin station not found"); // We can safely unwrap here because we already checked for existence above. This is the moment we take ownership of the station to mutate it.
 
-        // 3. Amputate the Destination
-        let mut destination = match self.stations.remove(&dest_name) {
-            Some(s) => s,
-            None => {
-                println!("{RED}Network Error: Destination station '{}' not found.{RESET}", dest_name);
-                self.stations.insert(origin_name, origin); // Put the origin back before aborting!
-                return;
-            }
-        };
-
-        // 4. Calculate Distance
-        let distance = self.get_distance(&origin, &destination).unwrap_or(0);
-        println!("Distance from {} to {} is {} km", origin.name, destination.name, distance);
+        // 4. Isolate the Destination
+        let mut destination = self.stations.remove(&dest_name).expect("Destination station not found"); // We can safely unwrap here because we already checked for existence above. This is the moment we take ownership of the station to mutate it.
 
         // 5. The Execution (We pass our single, original `mission` reference!)
         if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {

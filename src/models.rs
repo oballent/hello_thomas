@@ -160,7 +160,7 @@ impl TrainCar {
         if let Some(cargo) = &self.cargo {
             println!("{CYAN}UNLOADING: Car {} is discharging its payload {}.{RESET}", self.id, cargo.item);
         }
-        self.cargo.take() // The magic of .take() again—ownership moves out!
+        return self.cargo.take() // The magic of .take() again—ownership moves out!
     }
 }
 
@@ -177,6 +177,16 @@ pub struct Train{
 
 impl Train {
     
+    
+    pub fn eject_car(&mut self, id: u32) -> Option<TrainCar> {
+        if let Some(pos) = self.cars.iter().position(|c| c.id == id) {
+            Some(self.cars.remove(pos))
+        } else {
+            None
+        }
+    }
+    
+
     // Notice the &mut self. The train is 'taking damage' (burning fuel).
     pub fn dispatch(&mut self) -> Result<(), TrainError> {
         println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
@@ -218,14 +228,14 @@ pub struct Mission {
 
 pub struct RejectedAsset {
     pub car: TrainCar,
-    pub issue: TrainError,
+    pub issue: Vec<TrainError>,
     pub timestamp: u64, // When did it fail? How to impement this? A counter?
     pub source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
 }
 
 
 impl RejectedAsset {
-    pub fn new(car: TrainCar, issue: TrainError, source_mission: Option<u32>) -> Self {
+    pub fn new(car: TrainCar, issue: Vec<TrainError>, source_mission: Option<u32>) -> Self {
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         Self {
             car,
