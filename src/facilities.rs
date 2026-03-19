@@ -427,7 +427,8 @@ impl Station {
         // Since we already proved they exist in Step 1, we can fearlessly unwrap.
         let attached_cars: Vec<TrainCar> = self.yard.assemble_cars(mission)?; // This will also return an error if something goes wrong during the actual assembly process, which is a nice safety net.
 
-        // 4. The Station builds the Gestalt
+        // 4. The Station builds the Gestalt//testing
+    
         let train = Train {
             id: self.yard.generate_new_id(), // Station asks Yard for a tracking ID
             engine,
