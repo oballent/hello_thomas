@@ -6,6 +6,8 @@ use crate::models::{Cargo, EngineType, TrainError, Engine, TrainCar, Train, Miss
 use crate::facilities::{Station, Roundhouse, Railyard, Warehouse};
 use crate::network::RailwayNetwork;
 
+use std::sync::{WaitTimeoutResult, mpsc};
+use std::thread;
 use core::net;
 use std::{collections::{HashMap, VecDeque}, u32};
 
@@ -82,16 +84,47 @@ fn main() {
     }
 
 
-    let mission1: Mission = Mission { id: 1, origin: String::from("Tidmouth"), destination: String::from("Brendam Docks"), required_cars: vec![2, 4, 6] };
-    network.add_mission(mission1);
-    network.dispatch_train_across_network(1);
-    // network.dispatch_train_across_network(&1);
+    //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different station or control center sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
+    let (tx, rx) = mpsc::channel();
 
-    if let Some(tidmouth) = network.get_mut_station("Tidmouth"){
-        tidmouth.print_status();
-    }
-    if let Some(brendam_docks) = network.get_mut_station("Brendam Docks"){
-        brendam_docks.print_status();
+    //Give a radio to a concurrent thread, Producer 1, to send out a mission update. Since tx is moved into the closure, we need to clone it for each thread that wants to send messages. This allows multiple threads to send messages through the same channel without ownership conflicts.
+    let tx1 = tx.clone();
+    thread::spawn(move || {
+        let mission1: Mission = Mission { id: 1, origin: String::from("Tidmouth"), destination: String::from("Brendam Docks"), required_cars: vec![2, 4]};
+        tx1.send(mission1).unwrap();
+        println!("Thread 1 sending mission 1.");
+    });
+    //let txtest = tx1; // haha! tx1 has been moved and can't be assigned to txtest! so "move ||" means... er... what exactly, Polaris? Move, obviously.
+
+    // Cloning a radio for a second producer, Producer 2, to send out a different mission update concurrently.
+    let tx2  = tx.clone();
+    thread::spawn(move || {
+        let mission2: Mission = Mission{id:2, origin: String::from("Tidmouth"), destination: String::from("Brendam Docks"), required_cars: vec![6]};
+        tx2.send(mission2).unwrap();
+        println!("Thread 2 sending Mission 2.");
+    });
+
+    // The Network acts as a single consumer. It listens for incoming mission updates from any producer thread and processes them as they arrive.
+    //The main thread will block on the receiver (rx) until it gets a message and listen.
+    //Every time a mission comes through the radio from any producer thread, the main thread will process the mission by adding it to the network and dispatching a train across the network to fulfill said mission. 
+    for received_mission in rx {
+        println!{"Main thread received mission updated: {:?}", received_mission};
+
+        let received_mission_id = received_mission.id;
+        let received_mission_origin = received_mission.origin.clone();
+        let received_mission_destination = received_mission.destination.clone();
+        network.add_mission(received_mission);//truth be told, a Mission is pretty cheap to clone, but let's see if we can avoid that by moving the received mission directly into the network's ownership. Since we're done with it in the main thread after sending it to the network, we can just move it without needing to clone. Right, Polaris?
+
+        network.dispatch_train_across_network(received_mission_id);
+
+        
+
+        if let Some(origin) = network.get_mut_station(&received_mission_origin){
+            origin.print_status();
+        }
+        if let Some(destination) = network.get_mut_station(&received_mission_destination){
+            destination.print_status();
+        }
     }
 
 }

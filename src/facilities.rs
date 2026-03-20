@@ -338,7 +338,10 @@ impl Roundhouse {
 
                     // 2. Chain it using the `.and_then()` you love!
                     // If position returned Some(index), and_then passes that index into queue.remove()
-                    return winner_index.and_then(|index| queue.remove(index));
+                    if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
+                        println!("{GREEN}Roundhouse: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", engine.id, engine.engine_type, total_weight, distance_km);
+                        return Some(engine);
+                    }
                 }
 
             }

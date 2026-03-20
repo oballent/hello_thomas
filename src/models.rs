@@ -217,7 +217,8 @@ impl Train {
 
 }
 
-
+#[derive(Debug)]
+#[derive(Clone)]
 pub struct Mission {
     pub id: u32,
     pub origin: String,

@@ -117,12 +117,19 @@ impl RailwayNetwork {
                 println!("{RED}TRAIN NOT RECEIVED: Mission {} from {} to {} failed during traversal.{RESET}", mission.id, origin.name, destination.name);
             }
         } else {
-            println!("{RED}Mission {} from {} to {} failed to assemble.{RESET}", mission.id, origin.name, destination.name);
+            println!("{RED}Mission {} from {} to {} failed to assemble.{RESET}", mission.id, &origin.name, &destination.name);
         }
 
         // 6. Return ownership back to the network
-        self.stations.insert(origin_name, origin); 
-        self.stations.insert(dest_name, destination);
+        self.stations.insert(origin_name.clone(), origin); 
+        self.stations.insert(dest_name.clone(), destination);
+
+        //     if let Some(origin) = self.get_mut_station(&origin_name){
+        // origin.print_status();
+        //  }
+        // if let Some(destination) = self.get_mut_station(&dest_name){
+        //     destination.print_status();
+        // }
     }
 
     // pub fn dispatch_train_across_network(&mut self, mission_id: &u32) {
