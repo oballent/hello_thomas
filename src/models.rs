@@ -1,5 +1,6 @@
 use core::time;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::mpsc::Sender;
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -7,10 +8,6 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
-
-
-
-
 
 
 
@@ -197,8 +194,6 @@ impl Train {
         // 2. The Consequence
         self.engine.burn_fuel(total_weight, self.distance_km);
         
-        // 3. (Future) We could clear the cars here, simulating that they were delivered!
-        // self.cars.clear(); 
 
         Ok(())
     }
@@ -224,7 +219,17 @@ pub struct Mission {
     pub origin: String,
     pub destination: String,
     pub required_cars: Vec<u32>,
+    //Sending a channel with the mission report back to the main thread so it can print the station status after the mission is processed.
+    pub reply_channel: Option<Sender<MissionReport>>,
 }
+
+
+#[derive(Debug)]
+pub enum MissionReport {
+    Success(String),
+    Failure(String),
+}
+
 
 
 pub struct RejectedAsset {
@@ -246,3 +251,5 @@ impl RejectedAsset {
         }
     }
 }
+
+

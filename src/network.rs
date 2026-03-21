@@ -1,4 +1,4 @@
-use crate::models::{Mission, TrainError};
+use crate::models::{Mission, MissionReport, TrainError};
 use crate::facilities::Station;
 use std::collections::HashMap;
 
@@ -38,7 +38,7 @@ impl RailwayNetwork {
         let route = (origin.name.clone(), destination.name.clone());
         self.tracks.insert(route, distance);
         
-        // Sodor is not a one-way street. You likely want the reverse route too!
+        // Sodor is not a one-way street!
         let return_route = (destination.name.clone(), origin.name.clone());
         self.tracks.insert(return_route, distance);
     }
@@ -109,65 +109,30 @@ impl RailwayNetwork {
         let mut destination = self.stations.remove(&dest_name).expect("Destination station not found"); // We can safely unwrap here because we already checked for existence above. This is the moment we take ownership of the station to mutate it.
 
         // 5. The Execution (We pass our single, original `mission` reference!)
-        if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {
+        let report = if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {
             if let Ok(_) = train.dispatch() {
-                println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, destination.name);
+                //println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, destination.name);
                 destination.receive_train(train);
+                MissionReport::Success(format!("Train arrived safely at {}", dest_name))
             } else {
-                println!("{RED}TRAIN NOT RECEIVED: Mission {} from {} to {} failed during traversal.{RESET}", mission.id, origin.name, destination.name);
+                //println!("{RED}TRAIN NOT RECEIVED: Mission {} from {} to {} failed during traversal.{RESET}", mission.id, origin.name, destination.name);
+                MissionReport::Failure(format!("Train failed to arrive at {}", dest_name))
             }
         } else {
-            println!("{RED}Mission {} from {} to {} failed to assemble.{RESET}", mission.id, &origin.name, &destination.name);
+            //println!("{RED}Mission {} from {} to {} failed to assemble.{RESET}", mission.id, &origin.name, &destination.name);
+            MissionReport::Failure(format!("Mission {} from {} to {} failed to assemble.", mission.id, &origin.name, &destination.name))
+        };
+
+        if let Some(reply_tx) = &mission.reply_channel {
+            let _ = reply_tx.send(report);
         }
 
         // 6. Return ownership back to the network
         self.stations.insert(origin_name.clone(), origin); 
         self.stations.insert(dest_name.clone(), destination);
 
-        //     if let Some(origin) = self.get_mut_station(&origin_name){
-        // origin.print_status();
-        //  }
-        // if let Some(destination) = self.get_mut_station(&dest_name){
-        //     destination.print_status();
-        // }
+
     }
 
-    // pub fn dispatch_train_across_network(&mut self, mission_id: &u32) {
-
-    //     let origin_name: String;
-    //     let destination_name: String;
-    //     if let Some(m) = self.get_mission(mission_id) {
-    //         origin_name = m.origin.clone();
-    //         destination_name = m.destination.clone();
-    //     } else {
-    //         println!("{RED}Network Error: Mission {} does not exist in the ledger.{RESET}", mission_id);
-    //         return; // Abort before touching any stations
-    //     }
-    //     let mut origin = self.stations.remove(&origin_name).expect("Origin station not found");
-    //     let mut destination = self.stations.remove(&destination_name).expect("Destination station not found");
-
-    //     // let distance: u32 = self.tracks.get(&(origin.name.clone(), destination.name.clone()))
-    //     //     .copied()
-    //     //     .unwrap_or(0);
-
-    //     // println!("Dispatching mission {} from {} to {} ({} km)", mission_id, origin.name, destination.name, distance);
-
-    //     let distance = self.get_distance(&origin, &destination).unwrap_or(0);
-    //     println!("Distance from {} to {} is {} km", origin.name, destination.name, distance);
-    //     if let Some(mission) = self.get_mission(mission_id) {
-    //         if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {
-    //             if let Ok(_) = train.dispatch() {
-    //                 println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, destination.name);
-    //                 destination.receive_train(train); // The train arrives at the destination station, which triggers the disassembly process.
-    //             } else {
-    //                 println!("{RED}TRAIN NOT RECEIVED:Mission {} from {} to {} failed to dispatch during traversal.{RESET}", mission.id, origin.name, destination.name);
-    //             }
-    //         } else {
-    //             println!("{RED}Mission {} from {} to {} failed to dispatch.{RESET}", mission.id, origin.name, destination.name);
-    //         }
-    //     }
-    //     self.stations.insert(origin.name.clone(), origin); // Return ownership back to the network
-    //     self.stations.insert(destination.name.clone(), destination);
-    // }
 
 }

@@ -207,48 +207,8 @@ impl Railyard {
         Ok(attached_cars)
     }
 
-    // pub fn assemble_cars(&mut self, mission: &Mission) -> Result<Vec<TrainCar>, TrainError> {
-    //     let car_ids = &mission.required_cars;
-    
-    //     // Attempt all removals, collecting failures without mutating on partial success
-    //     let mut attached_cars = Vec::with_capacity(car_ids.len());
-    //     let mut missing = Vec::new();
-    
-    //     for id in car_ids {
-    //         match self.cars.remove(id) {
-    //             Some(car) => attached_cars.push(car),
-    //             None => missing.push(*id),
-    //         }
-    //     }
-    
-    //     if !missing.is_empty() {
-    //         // Re-insert any cars we already pulled, rolling back the partial mutation. Let's do it!
-    //         for car in attached_cars {
-    //             self.cars.insert(car.id, car);
-    //         }
-    //         // (in a real async system you'd want a transaction, but this is the spirit)
-    //         return Err(TrainError::AssemblyFailed { missing_car_ids: missing, engine_returned: 0 });
-    //     }
-    
-    //     Ok(attached_cars)
-    // }
-
-    // fn disassemble_train(&mut self, train:Train, roundhouse:&mut Roundhouse){
-    //     let engine = train.engine;
-    //     roundhouse.house(engine);
-
-    //     for car in train.cars {
-    //         if let Err((car, error)) = self.receive_car(car) {
-    //             println!("Failed to return Car {} to the yard: {:?}. Moving to purgatory.", car.id, error);
-    //             self.purgatory.push(car);
-    //         }
-
-
-    //     }
-    // }
-
     pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) -> Result<Vec<Cargo>, TrainError> {
-        let (engine, cars, _id) = (train.engine, train.cars, train.id); // Destructure the "Gestalt"
+        let (engine, cars, id) = (train.engine,train.cars, train.id); // Destructure the "Gestalt"
 
         // 1. Return the Power
         roundhouse.house(engine);
@@ -267,16 +227,16 @@ impl Railyard {
                     let payload = car_in_yard.unload_cargo();
                     // Future: Send 'payload' to Warehouse
                     if let Some(cargo) = payload {
-                        println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", _id, cargo.item, car_id_we_just_received);
+                        println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", id, cargo.item, car_id_we_just_received);
                         returned_cargo.push(cargo);
                     } else {
-                        println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", _id, car_id_we_just_received);
+                        println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", id, car_id_we_just_received);
                     }
                 }
             } else {
                 // receive_car already handles Purgatory internally in our current code.
             }
-        }
+    }
         Ok(returned_cargo)
     }
 
@@ -444,7 +404,7 @@ impl Station {
 
     pub fn receive_car(&mut self, car: TrainCar) {
         
-            let car_id = car.id;
+        let car_id = car.id;
         match self.yard.receive_car(car) {
             Ok(_) => println!("Car {} successfully received into the yard.", car_id),
             Err((homeless_car, error)) => {
