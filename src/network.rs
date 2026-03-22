@@ -36,12 +36,6 @@ impl RailwayNetwork {
 
 
 
-
-
-
-
-
-
     pub fn add_station(&mut self, station: Station) {
         // station.name is a String. We can clone it to use as the key, 
         // and move the actual station into the value.
@@ -75,45 +69,12 @@ impl RailwayNetwork {
 
 
 
-
-
-
-
-
-
-
 pub fn get_station_handle(&self, station_name: &String) -> Option<&Sender<StationCommand>> {
     self.station_handles.get(station_name)
 }
 
 
 
-
-
-
-
-// pub fn intake_car_across_network(&self, station_name: &str, car: TrainCar) {
-//         // 1. Find the Station's Radio
-//         let station_tx = match self.station_handles.get(station_name) {
-//             Some(tx) => tx.clone(),
-//             None => {
-//                 println!("{RED}Network Error: Station {} does not exist.{RESET}", station_name);
-//                 return;
-//             }
-//         };
-
-//         let (transit_tx, transit_rx) = mpsc::channel::<Result<(), TrainError>>();
-
-//         // 2. Send the IntakeCar command to the Station
-//         let _ = station_tx.send(StationCommand::IntakeCar { train_car: car, reply_to: transit_tx });
-
-//         // 3. Wait for the Station to confirm the intake!
-//         match transit_rx.recv() {
-//             Ok(Ok(_)) => println!("{GREEN}Network: {} successfully intook the car.{RESET}", station_name),
-//             Ok(Err(e)) => println!("{YELLOW}Network: {} rejected the car: {:?}{RESET}", station_name, e),
-//             Err(_) => println!("{RED}Network Error: {} radio died during intake.{RESET}", station_name),
-//         }
-//     }
 
 
 

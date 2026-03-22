@@ -91,50 +91,6 @@ fn main() {
 
 
 
-
-
-
-
-
-
-
-    
-    // let origin_name = String::from("Tidmouth");
-
-    // if let Some(origin) = network.get_mut_station(&origin_name) {
-    //     for car in tidmouth_incoming_cars {
-    //         origin.receive_car(car)
-    //     }
-
-    //     //Block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel (id: 1) Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
-    //     origin.house_engine(engine4);
-    //     origin.house_engine(engine1);
-    //     origin.house_engine(engine3);
-    //     origin.house_engine(engine2);
-    //     origin.house_engine(engine5);
-
-    //     origin.print_status();
-
-    // } else {
-    //     println!("Error: {} station not found in the network!", origin_name);
-    //     return;
-    // }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
