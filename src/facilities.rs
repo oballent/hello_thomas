@@ -1,6 +1,11 @@
 use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo};
 use std::collections::{HashMap, VecDeque};
 
+use std::f32::consts::E;
+use std::sync::mpsc::{self, Sender, Receiver};
+use std::thread;
+use crate::models::StationCommand;
+
 // (Don't forget to paste your color constants here too, or put them in a shared module later)
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -155,7 +160,6 @@ impl Railyard {
     }
 
     pub fn decouple_by_id(&mut self, train: &mut Train, id: u32){
-        let mut issues = Vec::<TrainError>::new();
         if let Some(pos) = train.cars.iter().position(|c| c.id == id) {
             let car = train.cars.remove(pos);
 
@@ -215,35 +219,37 @@ impl Railyard {
 
         // 2. Process the Cars
         let mut returned_cargo = Vec::new();
-        for mut car in cars {
+        for car in cars {
             // Step A: The Security Gate & Intake
             // This handles contraband and duplicate ID checks.
             let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
-            if let Ok(_) = self.receive_car(car) {
-                // Step B: Fulfillment
-                // Now that the car is safely in the yard's HashMap, 
-                // we can reach in and "deliver" the goods.
-                if let Some(mut car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
-                    let payload = car_in_yard.unload_cargo();
-                    // Future: Send 'payload' to Warehouse
-                    if let Some(cargo) = payload {
-                        println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", id, cargo.item, car_id_we_just_received);
-                        returned_cargo.push(cargo);
-                    } else {
-                        println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", id, car_id_we_just_received);
-                    }
+            match self.receive_car(car) {
+                Ok(_) => {
+                    // Step B: Fulfillment
+                    // Now that the car is safely in the yard's HashMap, 
+                    // we can reach in and "deliver" the goods.
+                    if let Some(car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
+                        let payload = car_in_yard.unload_cargo();
+                        // Future: Send 'payload' to Warehouse
+                        if let Some(cargo) = payload {
+                            println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", id, cargo.item, car_id_we_just_received);
+                            returned_cargo.push(cargo);
+                        } else {
+                            println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", id, car_id_we_just_received);
+                        }
+                    }   
+                } 
+                Err((homeless_car, e)) => {
+                    println!("{RED}Train {}: Failed to process Car {} during disassembly: {:?}. Moving to purgatory.{RESET}", id, car_id_we_just_received, e);
+                    let rejected_asset = RejectedAsset::new(homeless_car, e, Some(train.mission_id.unwrap_or(0))); // We can fill in the timestamp later when we implement that feature.
+                    self.purgatory.push(rejected_asset);
                 }
-            } else {
-                // receive_car already handles Purgatory internally in our current code.
             }
-    }
+        }
+
         Ok(returned_cargo)
-    }
-
-}   
-
-
-
+    }   
+}
 
 
 pub struct Roundhouse {
@@ -344,108 +350,322 @@ impl Warehouse {
 
 
 
+// pub struct Station {
+//     pub name: String,
+//     pub yard: Railyard,
+//     pub warehouse: Warehouse,
+//     pub roundhouse: Roundhouse,
+// }
+
 pub struct Station {
     pub name: String,
-    pub yard: Railyard,
-    pub warehouse: Warehouse,
-    pub roundhouse: Roundhouse,
+    pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
 }
 
+fn assemble_train(
+    station_name: &str,
+    yard: &mut Railyard,
+    roundhouse: &mut Roundhouse,
+    mission: &Mission,
+    distance: u32,
+) -> Result<Train, TrainError> {
+    println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", station_name, mission.id);
+
+    let total_weight = yard.get_total_cargo_weight(mission)?;
+    let engine = roundhouse
+        .find_suitable_engine(total_weight, distance)
+        .ok_or(TrainError::NoAvailableEngine)?;
+    let attached_cars: Vec<TrainCar> = yard.assemble_cars(mission)?;
+
+    Ok(Train {
+        id: yard.generate_new_id(),
+        engine,
+        cars: attached_cars,
+        distance_km: distance,
+        mission_id: Some(mission.id),
+    })
+}
+
+fn receive_train_internal(
+    station_name: &str,
+    yard: &mut Railyard,
+    roundhouse: &mut Roundhouse,
+    warehouse: &mut Warehouse,
+    train: Train,
+) -> Result<(), TrainError> {
+    println!(
+        "{BOLD}{CYAN}[{}] Received an incoming train {}. Initiating breakdown...{RESET}",
+        station_name, train.id
+    );
+
+    let payloads = yard.disassemble_train(train, roundhouse)?;
+    for cargo in payloads {
+        warehouse.store(cargo);
+    }
+
+    Ok(())
+}
 
 
 impl Station {
     pub fn new(name: &str) -> Self {
+        // Create a channel for this station
+        let (tx, rx): (Sender<StationCommand>, Receiver<StationCommand>) = mpsc::channel();
+
+        // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
+        let mut roundhouse = Roundhouse::new();
+        let mut yard = Railyard::new();
+        let mut warehouse = Warehouse::new();
+        let station_name = String::from(name);
+        // Spawn a thread to run the station's internal loop
+        thread::spawn(move || {
+            // The station's internal state
+            println!("{BOLD}{CYAN}[{}] Station is now operational and awaiting commands...{RESET}", station_name);
+
+            // The station's main loop
+            for command in rx {
+                match command {
+                    StationCommand::AssembleMission { mission, distance, reply_to } => {
+                        println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
+                        let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
+                        if let Err(send_error) = reply_to.send(result) {
+                            if let Ok(phantom_train) = send_error.0 {
+                                let result = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train);
+                                    if let Err(e) = result {
+                                        println!("{RED}[{}] ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
+                                    }
+                            }
+                            println!(
+                                "{RED}[{}] DEAD-LETTER: assemble reply dropped (mission_id={}, request_id={}).{RESET}",
+                                station_name, mission.id, mission.request_id
+                            );
+                        }
+                    },
+                    StationCommand::ReceiveTrain { train, reply_to } => {
+                        let result = receive_train_internal(
+                            &station_name,
+                            &mut yard,
+                            &mut roundhouse,
+                            &mut warehouse,
+                            train,
+                        );
+                        if reply_to.send(result).is_err() {
+                            println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
+                        }
+                    },
+                    StationCommand::IntakeCar { train_car, reply_to } => {
+                        println!("{BOLD}{CYAN}[{}] Received command to intake a new car into the yard.{RESET}", station_name);
+                        let result = match yard.receive_car(train_car) {
+                            Ok(_) => Ok(()),
+                            Err((homeless_car, issues)) => {
+                                let reason = format!("Car intake failed due to {:?}", &issues);
+                                let rejected_asset = RejectedAsset::new(homeless_car, issues, None);
+                                yard.purgatory.push(rejected_asset);
+                                Err(TrainError::MissionImpossible {
+                                    reason,
+                                })
+                            }
+                        };
+                        if reply_to.send(result).is_err() {
+                            println!("{RED}[{}] DEAD-LETTER: intake-car reply dropped.{RESET}", station_name);
+                        }
+                    },
+                    StationCommand::IntakeEngine { engine, reply_to } => {
+                        println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
+                        roundhouse.house(engine);
+                        if reply_to.send(Ok(())).is_err() {
+                            println!("{RED}[{}] DEAD-LETTER: intake-engine reply dropped.{RESET}", station_name);
+                        }
+                    }
+                    StationCommand::PrintStatus => {
+                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        yard.print_report(&roundhouse);
+                        println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
+                        for cargo in &warehouse.inventory {
+                            println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
+                        }
+                    },
+                    StationCommand::Terminate => {
+                        println!("{BOLD}{RED}[{}] Termination command received. Shutting down station thread.{RESET}", station_name);
+                        break; // Exit the loop to terminate the thread
+                    },
+                }
+                //print a report for railyard, roundhouse, and warehouse after every command to track the internal state changes over time.
+                println!("{BOLD}{CYAN}[{}] Current Station Status:{RESET}", station_name);
+                yard.print_report(&roundhouse);
+                println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
+                for cargo in &warehouse.inventory {
+                    println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
+                }
+
+            }
+        });
+        // The thread will run an infinite loop, waiting for commands to arrive on the rx channel, and processing them as they come in. This is where the station's internal logic will live, and it will have access to its own yard, roundhouse, and warehouse to manage its operations.
         Self {
             name: String::from(name),
-            yard: Railyard::new(),
-            warehouse: Warehouse::new(),
-            roundhouse: Roundhouse::new(),
+            tx, // We return the sending end to the main thread so it can send commands to this station
         }
     }
 
-    pub fn process_ejected_car(&mut self, train: &mut Train, car_id: u32) {
-        if let Some(car) = train.eject_car(car_id) {
-            if let Err((homeless_car, issues)) = self.yard.receive_car(car) {
-                let rejected_asset = RejectedAsset::new(homeless_car, issues, train.mission_id);
-                self.yard.purgatory.push(rejected_asset);
-            }
-        }
-    }
+    // pub fn assemble_and_dispatch(&self, mission: &Mission, distance: u32) -> Result<Train, TrainError> {
+    //     let (reply_to, reply_rx) = mpsc::channel();
+    //     self.tx
+    //         .send(StationCommand::AssembleMission {
+    //             mission: mission.clone(),
+    //             distance,
+    //             reply_to,
+    //         })
+    //         .map_err(|e| TrainError::MissionImpossible {
+    //             reason: format!("station command channel unavailable: {}", e),
+    //         })?;
 
+    //     reply_rx.recv().map_err(|e| TrainError::MissionImpossible {
+    //         reason: format!("assemble reply channel unavailable: {}", e),
+    //     })?
+    // }
 
-    pub fn assemble_and_dispatch(&mut self, mission: &Mission, distance: u32) -> Result<Train, TrainError> {
-        println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", self.name, mission.id);
+    // pub fn receive_train(&self, train: Train) -> Result<(), TrainError> {
+    //     let (reply_to, reply_rx) = mpsc::channel();
+    //     self.tx
+    //         .send(StationCommand::ReceiveTrain { train, reply_to })
+    //         .map_err(|e| TrainError::MissionImpossible {
+    //             reason: format!("station command channel unavailable: {}", e),
+    //         })?;
 
-        let required_ids = &mission.required_cars;
+    //     reply_rx.recv().map_err(|e| TrainError::MissionImpossible {
+    //         reason: format!("receive-train reply channel unavailable: {}", e),
+    //     })?
+    // }
 
-        //1/ We can combine the inventory check and weight calculation into a single method in the yard for cleaner code and better separation of concerns.
-        let total_weight = self.yard.get_total_cargo_weight(mission)?;
+    // pub fn receive_car(&self, car: TrainCar) {
+    //     let (reply_to, reply_rx) = mpsc::channel();
+    //     let send_result = self.tx.send(StationCommand::IntakeCar {
+    //         train_car: car,
+    //         reply_to,
+    //     });
+    //     if send_result.is_err() {
+    //         println!("{RED}[{}] Failed to send intake-car command to station actor.{RESET}", self.name);
+    //         return;
+    //     }
+    //     if let Ok(Err(e)) = reply_rx.recv() {
+    //         println!("{RED}[{}] Intake car failed: {:?}{RESET}", self.name, e);
+    //     }
+    // }
 
+    // pub fn house_engine(&self, engine: Engine) {
+    //     let (reply_to, reply_rx) = mpsc::channel();
+    //     let send_result = self.tx.send(StationCommand::IntakeEngine {
+    //         engine,
+    //         reply_to,
+    //     });
+    //     if send_result.is_err() {
+    //         println!("{RED}[{}] Failed to send intake-engine command to station actor.{RESET}", self.name);
+    //         return;
+    //     }
+    //     let _ = reply_rx.recv();
+    // }
 
-        // 2. Ask the Roundhouse for an Engine (Mutable, as we remove it)
-        let engine = self.roundhouse.find_suitable_engine(total_weight, distance)
-            .ok_or(TrainError::NoAvailableEngine)?;
+    // pub fn print_status(&self) {
+    //     if self.tx.send(StationCommand::PrintStatus).is_err() {
+    //         println!("{RED}[{}] Failed to request status from station actor.{RESET}", self.name);
+    //     }
+    // }
 
-        // 3. Command the Yard to extract the cars (Mutable, as we remove them)
-        // Since we already proved they exist in Step 1, we can fearlessly unwrap.
-        let attached_cars: Vec<TrainCar> = self.yard.assemble_cars(mission)?; // This will also return an error if something goes wrong during the actual assembly process, which is a nice safety net.
-
-        // 4. The Station builds the Gestalt//testing
-        let train = Train {
-            id: self.yard.generate_new_id(), // Station asks Yard for a tracking ID
-            engine,
-            cars: attached_cars,
-            distance_km: distance,
-            mission_id: Some(mission.id),
-        };
-
-        Ok(train)
-    }
-
-    pub fn receive_car(&mut self, car: TrainCar) {
-        
-        let car_id = car.id;
-        match self.yard.receive_car(car) {
-            Ok(_) => println!("Car {} successfully received into the yard.", car_id),
-            Err((homeless_car, error)) => {
-                println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
-                let rejected_asset = RejectedAsset::new(homeless_car, error, None); // We can fill in the timestamp and source_mission later when we implement those features.
-                self.yard.purgatory.push(rejected_asset);
-            }
-        }
-    }
-
-    pub fn house_engine(&mut self, engine: Engine) {
-        println!("Roundhouse: Housing Engine {} of type {:?}.", engine.id, engine.engine_type);
-        self.roundhouse.house(engine);
-    }
-
-    pub fn receive_train(&mut self, train: Train) {
-        println!("{BOLD}{GREEN}[{}] Train {} has arrived. Initiating breakdown.{RESET}", self.name, train.id);
-        if let Ok(payloads) = self.yard.disassemble_train(train, &mut self.roundhouse) {
-            for cargo in payloads{
-                self.warehouse.store(cargo);
-            }
-        }
-    }
-    
-    // A helper to inspect the local state
-pub fn print_status(&self) {
-        println!("\n{BOLD}{CYAN}=== STATION REPORT: {} ==={RESET}", self.name);
-        
-        // 1. Print Yard & Roundhouse
-        self.yard.print_report(&self.roundhouse);
-
-        // 2. Print Warehouse
-        println!("{BOLD}{YELLOW}📦 WAREHOUSE INVENTORY ({}) 📦{RESET}", self.warehouse.inventory.len());
-        if self.warehouse.inventory.is_empty() {
-            println!("    (Warehouse is empty)");
-        } else {
-            for (i, cargo) in self.warehouse.inventory.iter().enumerate() {
-                let contraband_status = if cargo.contraband.is_some() { "[FLAGGED]" } else { "[CLEARED]" };
-                println!("    {}. {} ({}kg) {}", i + 1, cargo.item, cargo.actual_weight, contraband_status);
-            }
-        }
-        println!("{BOLD}{CYAN}======================================{RESET}\n");
-    }
 }
+
+// impl Station {
+//     pub fn new(name: &str) -> Self {
+//         Self {
+//             name: String::from(name),
+//             yard: Railyard::new(),
+//             warehouse: Warehouse::new(),
+//             roundhouse: Roundhouse::new(),
+//         }
+//     }
+
+//     pub fn process_ejected_car(&mut self, train: &mut Train, car_id: u32) {
+//         if let Some(car) = train.eject_car(car_id) {
+//             if let Err((homeless_car, issues)) = self.yard.receive_car(car) {
+//                 let rejected_asset = RejectedAsset::new(homeless_car, issues, train.mission_id);
+//                 self.yard.purgatory.push(rejected_asset);
+//             }
+//         }
+//     }
+
+
+    // pub fn assemble_and_dispatch(&mut self, mission: &Mission, distance: u32) -> Result<Train, TrainError> {
+    //     println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", self.name, mission.id);
+
+    //     let required_ids = &mission.required_cars;
+
+    //     //1/ We can combine the inventory check and weight calculation into a single method in the yard for cleaner code and better separation of concerns.
+    //     let total_weight = self.yard.get_total_cargo_weight(mission)?;
+
+
+    //     // 2. Ask the Roundhouse for an Engine (Mutable, as we remove it)
+    //     let engine = self.roundhouse.find_suitable_engine(total_weight, distance)
+    //         .ok_or(TrainError::NoAvailableEngine)?;
+
+    //     // 3. Command the Yard to extract the cars (Mutable, as we remove them)
+    //     // Since we already proved they exist in Step 1, we can fearlessly unwrap.
+    //     let attached_cars: Vec<TrainCar> = self.yard.assemble_cars(mission)?; // This will also return an error if something goes wrong during the actual assembly process, which is a nice safety net.
+
+    //     // 4. The Station builds the Gestalt//testing
+    //     let train = Train {
+    //         id: self.yard.generate_new_id(), // Station asks Yard for a tracking ID
+    //         engine,
+    //         cars: attached_cars,
+    //         distance_km: distance,
+    //         mission_id: Some(mission.id),
+    //     };
+
+    //     Ok(train)
+    // }
+
+//     pub fn receive_car(&mut self, car: TrainCar) {
+        
+//         let car_id = car.id;
+//         match self.yard.receive_car(car) {
+//             Ok(_) => println!("Car {} successfully received into the yard.", car_id),
+//             Err((homeless_car, error)) => {
+//                 println!("Intake failed for Car {}: {:?}. Moving to purgatory.", homeless_car.id, error);
+//                 let rejected_asset = RejectedAsset::new(homeless_car, error, None); // We can fill in the timestamp and source_mission later when we implement those features.
+//                 self.yard.purgatory.push(rejected_asset);
+//             }
+//         }
+//     }
+
+//     pub fn house_engine(&mut self, engine: Engine) {
+//         println!("Roundhouse: Housing Engine {} of type {:?}.", engine.id, engine.engine_type);
+//         self.roundhouse.house(engine);
+//     }
+
+//     pub fn receive_train(&mut self, train: Train) {
+//         println!("{BOLD}{GREEN}[{}] Train {} has arrived. Initiating breakdown.{RESET}", self.name, train.id);
+//         if let Ok(payloads) = self.yard.disassemble_train(train, &mut self.roundhouse) {
+//             for cargo in payloads{
+//                 self.warehouse.store(cargo);
+//             }
+//         }
+//     }
+    
+//     // A helper to inspect the local state
+// pub fn print_status(&self) {
+//         println!("\n{BOLD}{CYAN}=== STATION REPORT: {} ==={RESET}", self.name);
+        
+//         // 1. Print Yard & Roundhouse
+//         self.yard.print_report(&self.roundhouse);
+
+//         // 2. Print Warehouse
+//         println!("{BOLD}{YELLOW}📦 WAREHOUSE INVENTORY ({}) 📦{RESET}", self.warehouse.inventory.len());
+//         if self.warehouse.inventory.is_empty() {
+//             println!("    (Warehouse is empty)");
+//         } else {
+//             for (i, cargo) in self.warehouse.inventory.iter().enumerate() {
+//                 let contraband_status = if cargo.contraband.is_some() { "[FLAGGED]" } else { "[CLEARED]" };
+//                 println!("    {}. {} ({}kg) {}", i + 1, cargo.item, cargo.actual_weight, contraband_status);
+//             }
+//         }
+//         println!("{BOLD}{CYAN}======================================{RESET}\n");
+//     }
+// }

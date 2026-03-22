@@ -1,4 +1,3 @@
-use core::time;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::mpsc::Sender;
 
@@ -37,6 +36,28 @@ impl Cargo {
         Ok(format!("Cargo '{}' is clear and safe.", self.item))
     }
 }
+
+
+pub struct RejectedAsset {
+    pub car: TrainCar,
+    pub issue: Vec<TrainError>,
+    pub timestamp: u64, // When did it fail? How to impement this? A counter?
+    pub source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
+}
+
+
+impl RejectedAsset {
+    pub fn new(car: TrainCar, issue: Vec<TrainError>, source_mission: Option<u32>) -> Self {
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        Self {
+            car,
+            issue,
+            timestamp,
+            source_mission,
+        }
+    }
+}
+
 
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)] // This allows us to easily create copies of EngineType values, which is useful for passing them around without losing ownership.
@@ -98,6 +119,7 @@ pub enum TrainError {
 }
 
 
+#[derive(Debug)]
 pub struct Engine {
     pub id: u32,
     pub engine_type: EngineType,
@@ -163,6 +185,7 @@ impl TrainCar {
 
 
 
+#[derive(Debug)]
 pub struct Train{
     pub id: u32,
     pub cars: Vec<TrainCar>,
@@ -171,9 +194,7 @@ pub struct Train{
     pub mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
 }
 
-
 impl Train {
-    
     
     pub fn eject_car(&mut self, id: u32) -> Option<TrainCar> {
         if let Some(pos) = self.cars.iter().position(|c| c.id == id) {
@@ -216,6 +237,7 @@ impl Train {
 #[derive(Clone)]
 pub struct Mission {
     pub id: u32,
+    pub request_id: u64,
     pub origin: String,
     pub destination: String,
     pub required_cars: Vec<u32>,
@@ -231,25 +253,25 @@ pub enum MissionReport {
 }
 
 
-
-pub struct RejectedAsset {
-    pub car: TrainCar,
-    pub issue: Vec<TrainError>,
-    pub timestamp: u64, // When did it fail? How to impement this? A counter?
-    pub source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
+#[derive(Debug)]
+pub enum StationCommand {
+    AssembleMission {
+        mission: Mission,
+        distance: u32,
+        reply_to: Sender<Result<Train, TrainError>>,
+    },
+    ReceiveTrain {
+        train: Train,
+        reply_to: Sender<Result<(), TrainError>>,
+    },
+    IntakeCar {
+        train_car: TrainCar,
+        reply_to: Sender<Result<(), TrainError>>,
+    },
+    IntakeEngine {
+        engine: Engine,
+        reply_to: Sender<Result<(), TrainError>>,
+    },
+    PrintStatus,                   // Reporting
+    Terminate,                     // Graceful Shutdown
 }
-
-
-impl RejectedAsset {
-    pub fn new(car: TrainCar, issue: Vec<TrainError>, source_mission: Option<u32>) -> Self {
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        Self {
-            car,
-            issue,
-            timestamp,
-            source_mission,
-        }
-    }
-}
-
-

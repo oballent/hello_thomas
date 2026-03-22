@@ -2,14 +2,12 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::models::{Cargo, EngineType, TrainError, Engine, TrainCar, Train, Mission, MissionReport, RejectedAsset};
-use crate::facilities::{Station, Roundhouse, Railyard, Warehouse};
+use crate::models::{Cargo, EngineType, Engine, TrainCar, Mission, MissionReport, StationCommand};
+use crate::facilities::Station;
 use crate::network::RailwayNetwork;
 
-use std::sync::{WaitTimeoutResult, mpsc};
+use std::sync::mpsc;
 use std::thread;
-use core::net;
-use std::{collections::{HashMap, VecDeque}, u32};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -27,16 +25,6 @@ fn main() {
     // 1. Instantiate the Stations locally
     let tidmouth = Station::new("Tidmouth");
     let brendam_docks = Station::new("Brendam Docks");
-
-    // 2. Build the tracks using immutable references to the local variables!
-    // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-    network.add_tracks(&tidmouth, &brendam_docks, 250);
-    network.add_tracks(&brendam_docks, &tidmouth, 250); // We can add the reverse route too, since Sodor is not a one-way street!
-
-    // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
-    network.add_station(tidmouth);
-    network.add_station(brendam_docks);
-
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -63,26 +51,103 @@ fn main() {
     let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 500.0 };
     let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
 
+    let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5];
 
-    let origin_name = String::from("Tidmouth");
-    if let Some(origin) = network.get_mut_station(&origin_name) {
-        for car in tidmouth_incoming_cars {
-            origin.receive_car(car)
+    // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
+    let (tx_reply, rx_reply) = mpsc::channel();
+
+    tidmouth_incoming_cars.into_iter().for_each(|car| {
+        match tidmouth.tx.send(StationCommand::IntakeCar { train_car: car, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Car successfully intaken by Tidmouth!"),
+            Err(e) => println!("Failed to intake car: {:?}", e),
         }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Tidmouth confirmed receipt of the car."),
+                Err(e) => println!("Tidmouth reported an error while intaking the car: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
+        }
+    });
 
-        //Block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel (id: 1) Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
-        origin.house_engine(engine4);
-        origin.house_engine(engine1);
-        origin.house_engine(engine3);
-        origin.house_engine(engine2);
-        origin.house_engine(engine5);
 
-        origin.print_status();
 
-    } else {
-        println!("Error: {} station not found in the network!", origin_name);
-        return;
-    }
+    tidmouth_incoming_engines.into_iter().for_each(|engine| {
+        match tidmouth.tx.send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Tidmouth!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Tidmouth confirmed receipt of the engine."),
+                Err(e) => println!("Tidmouth reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
+        }
+    });
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    // let origin_name = String::from("Tidmouth");
+
+    // if let Some(origin) = network.get_mut_station(&origin_name) {
+    //     for car in tidmouth_incoming_cars {
+    //         origin.receive_car(car)
+    //     }
+
+    //     //Block a full-fuel Thomas with a half-fuel Thomas to test the find_suitable_engine method. Since the half_fuel (id: 1) Thomas is technically the correct type for the mission, but doesn't have the fuel to complete it, the roundhouse should skip it and select the Thomas with enough fuel to complete the mission instead.
+    //     origin.house_engine(engine4);
+    //     origin.house_engine(engine1);
+    //     origin.house_engine(engine3);
+    //     origin.house_engine(engine2);
+    //     origin.house_engine(engine5);
+
+    //     origin.print_status();
+
+    // } else {
+    //     println!("Error: {} station not found in the network!", origin_name);
+    //     return;
+    // }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    // 2. Build the tracks using immutable references to the local variables!
+    // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
+    network.add_tracks(&tidmouth, &brendam_docks, 250);
+    network.add_tracks(&brendam_docks, &tidmouth, 250); // We can add the reverse route too, since Sodor is not a one-way street!
+
+    // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
+    network.add_station(tidmouth);
+    network.add_station(brendam_docks);
+
+
+
+
 
 
     //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different station or control center sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
@@ -97,6 +162,7 @@ fn main() {
         // 2. put the transmitter inside the Mission payload so the network can send a report back to the main thread after processing the mission. This is a common pattern in Rust for asynchronous communication, where you include a sender in the message payload to allow the recipient to send a response back to the original sender.
         let mission1: Mission = Mission { 
             id: 1, 
+            request_id: 1001,
             origin: String::from("Tidmouth"), 
             destination: String::from("Brendam Docks"), 
             required_cars: vec![2, 4], 
@@ -126,6 +192,7 @@ fn main() {
         //2. Place the "radio" (sender) inside the Mission payload so the network can send a report back to the main thread after processing the mission.
         let mission2: Mission = Mission{
             id:2, 
+            request_id: 1002,
             origin: String::from("Tidmouth"),
             destination: String::from("Brendam Docks"), 
             required_cars: vec![6],
@@ -161,12 +228,12 @@ fn main() {
 
         
 
-        if let Some(origin) = network.get_station(&received_mission_origin){
-            origin.print_status();
-        }
-        if let Some(destination) = network.get_station(&received_mission_destination){
-            destination.print_status();
-        }
+        // if let Some(origin) = network.get_station(&received_mission_origin){
+        //     origin.print_status();
+        // }
+        // if let Some(destination) = network.get_station(&received_mission_destination){
+        //     destination.print_status();
+        // }
 
 
     }

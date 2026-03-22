@@ -1,6 +1,7 @@
-use crate::models::{Mission, MissionReport, TrainError};
+use crate::models::{Mission, MissionReport, StationCommand, Train, TrainError};
 use crate::facilities::Station;
 use std::collections::HashMap;
+use std::sync::mpsc::{self, Sender};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -14,7 +15,9 @@ pub struct RailwayNetwork {
     // Maps (Origin, Destination) -> Distance in km
     tracks: HashMap<(String, String), u32>,
     // The network also needs to hold the Stations themselves so it can route trains between them
-    stations: HashMap<String, Station>,
+    //stations: HashMap<String, Station>,
+    // We no longer hold physical Stations. We hold the Transmitters to their Actor threads!
+    station_handles: HashMap<String, Sender<StationCommand>>,
     missions: HashMap<u32, Mission>, // <-- The Source of Truth for all missions on the network
 }
 
@@ -22,15 +25,27 @@ impl RailwayNetwork {
     pub fn new() -> Self {
         RailwayNetwork {
             tracks: HashMap::new(),
-            stations: HashMap::new(),
+            //stations: HashMap::new(),
+            station_handles: HashMap::new(),
             missions: HashMap::new(),
         }
     }
     
+
+
+
+
+
+
+
+
+
+
+
     pub fn add_station(&mut self, station: Station) {
         // station.name is a String. We can clone it to use as the key, 
         // and move the actual station into the value.
-        self.stations.insert(station.name.clone(), station);
+        self.station_handles.insert(station.name.clone(), station.tx);
     }
 
     pub fn add_tracks(&mut self, origin: &Station, destination: &Station, distance: u32) {
@@ -48,90 +63,126 @@ impl RailwayNetwork {
         self.missions.insert(mission.id, mission);
     }
 
-    pub fn get_station(&self, name: &str) -> Option<&Station> {
-        self.stations.get(name)
-    }
-    
     pub fn get_distance(&self, origin: &String, destination: &String) -> Option<u32> {
         self.tracks.get(&(origin.clone(), destination.clone())).copied()
-    }
-
-    /// Allows the global environment (main) to temporarily borrow a station to mutate it.
-    pub fn get_mut_station(&mut self, name: &str) -> Option<&mut Station> {
-        self.stations.get_mut(name)
     }
 
     pub fn get_mission(&self, mission_id: &u32) -> Option<&Mission> {
         self.missions.get(mission_id)
     }
 
-    // Note: passing primitive integers by reference (&u32) is unidiomatic. Just pass u32!
-    pub fn dispatch_train_across_network(&mut self, mission_id: u32) {
-        
-        // 1. Direct Field Access. 
-        // This immutably locks ONLY self.missions. self.stations is still free!
-        // The mission is The Oracle that reveals the metadata we need to perform the dispatch, but it does not have the power to mutate anything itself. It's just a reference to the immutable ledger.
+    
+
+
+
+
+
+
+
+
+
+
+pub fn get_station_handle(&self, station_name: &String) -> Option<&Sender<StationCommand>> {
+    self.station_handles.get(station_name)
+}
+
+
+
+
+
+
+
+// pub fn intake_car_across_network(&self, station_name: &str, car: TrainCar) {
+//         // 1. Find the Station's Radio
+//         let station_tx = match self.station_handles.get(station_name) {
+//             Some(tx) => tx.clone(),
+//             None => {
+//                 println!("{RED}Network Error: Station {} does not exist.{RESET}", station_name);
+//                 return;
+//             }
+//         };
+
+//         let (transit_tx, transit_rx) = mpsc::channel::<Result<(), TrainError>>();
+
+//         // 2. Send the IntakeCar command to the Station
+//         let _ = station_tx.send(StationCommand::IntakeCar { train_car: car, reply_to: transit_tx });
+
+//         // 3. Wait for the Station to confirm the intake!
+//         match transit_rx.recv() {
+//             Ok(Ok(_)) => println!("{GREEN}Network: {} successfully intook the car.{RESET}", station_name),
+//             Ok(Err(e)) => println!("{YELLOW}Network: {} rejected the car: {:?}{RESET}", station_name, e),
+//             Err(_) => println!("{RED}Network Error: {} radio died during intake.{RESET}", station_name),
+//         }
+//     }
+
+
+
+pub fn dispatch_train_across_network(&mut self, mission_id: u32) {
+        // 1. Get the Mission
         let mission = match self.missions.get(&mission_id) {
-            Some(m) => m,
+            Some(m) => m.clone(), // We clone it so we don't hold a lock on the HashMap
             None => {
-                println!("{RED}Network Error: Mission {} does not exist in the ledger.{RESET}", mission_id);
-                return; 
-            }
-        };
-
-
-        //1. Do the Stations exist? (Check the Nodes)
-        if !self.stations.contains_key(&mission.origin) {
-            println!("Error: Origin missing."); return;
-        }
-        if !self.stations.contains_key(&mission.destination) {
-            println!("Error: Destination missing."); return;
-        }
-
-        // 2. Does the Route exist? (Check the Edges)
-        let distance = match self.get_distance(&mission.origin, &mission.destination) {
-            Some(d) => d,
-            None => {
-                println!("Error: No track laid between {} and {}.", mission.origin, mission.destination); 
+                println!("{RED}Network Error: Mission {} does not exist.{RESET}", mission_id);
                 return;
             }
         };
 
-        // We clone the names here because we will need to re-insert the stations later
-        // and we cannot move data out of our borrowed mission reference.
-        let origin_name = mission.origin.clone();
-        let dest_name = mission.destination.clone();
-
-        // 3. Isolate the Origin (mutably borrowing ONLY self.stations)
-        let mut origin = self.stations.remove(&origin_name).expect("Origin station not found"); // We can safely unwrap here because we already checked for existence above. This is the moment we take ownership of the station to mutate it.
-
-        // 4. Isolate the Destination
-        let mut destination = self.stations.remove(&dest_name).expect("Destination station not found"); // We can safely unwrap here because we already checked for existence above. This is the moment we take ownership of the station to mutate it.
-
-        // 5. The Execution (We pass our single, original `mission` reference!)
-        let report = if let Ok(mut train) = origin.assemble_and_dispatch(mission, distance) {
-            if let Ok(_) = train.dispatch() {
-                //println!("{GREEN}Mission {} completed successfully! Train {} has arrived at {}.{RESET}", mission.id, train.id, destination.name);
-                destination.receive_train(train);
-                MissionReport::Success(format!("Train arrived safely at {}", dest_name))
-            } else {
-                //println!("{RED}TRAIN NOT RECEIVED: Mission {} from {} to {} failed during traversal.{RESET}", mission.id, origin.name, destination.name);
-                MissionReport::Failure(format!("Train failed to arrive at {}", dest_name))
+        // 2. Get the Distance
+        let distance = match self.get_distance(&mission.origin, &mission.destination) {
+            Some(d) => d,
+            None => {
+                println!("{RED}Error: No track laid between {} and {}.{RESET}", mission.origin, mission.destination);
+                return;
             }
-        } else {
-            //println!("{RED}Mission {} from {} to {} failed to assemble.{RESET}", mission.id, &origin.name, &destination.name);
-            MissionReport::Failure(format!("Mission {} from {} to {} failed to assemble.", mission.id, &origin.name, &destination.name))
         };
 
-        if let Some(reply_tx) = &mission.reply_channel {
+        // 3. Find the Origin and Destination Radios
+        let origin_tx = match self.station_handles.get(&mission.origin) {
+            Some(tx) => tx.clone(),
+            None => return,
+        };
+        let dest_tx = match self.station_handles.get(&mission.destination) {
+            Some(tx) => tx.clone(),
+            None => return,
+        };
+
+        // 4. Create the Transit Channel (The radio frequency the Origin will use to send the Train to the Network)
+        let (transit_tx, transit_rx) = mpsc::channel::<Result<Train, TrainError>>();
+
+        // 5. Send the command to the Origin!
+        println!("{YELLOW}Network: Ordering {} to assemble Mission {}.{RESET}", mission.origin, mission.id);
+        let _ = origin_tx.send(StationCommand::AssembleMission {
+            mission: mission.clone(),
+            distance,
+            reply_to: transit_tx,
+        });
+
+        // 6. Block and wait for the Train to be built
+        let report = match transit_rx.recv() {
+            Ok(Ok(train)) => {
+                println!("{GREEN}Network: Train {} received from {}. Routing to {}...{RESET}", train.id, mission.origin, mission.destination);
+                
+                // 7. Train is built! Send it to the destination
+                let (arrival_tx, arrival_rx) = mpsc::channel::<Result<(), TrainError>>();
+                let _ = dest_tx.send(StationCommand::ReceiveTrain {
+                    train,
+                    reply_to: arrival_tx,
+                });
+
+                // 8. Wait for the Destination to confirm breakdown
+                match arrival_rx.recv() {
+                    Ok(Ok(_)) => MissionReport::Success(format!("Train arrived safely at {}", mission.destination)),
+                    _ => MissionReport::Failure("Train failed during receiving/disassembly.".to_string()),
+                }
+            },
+            Ok(Err(e)) => MissionReport::Failure(format!("Assembly failed at {}: {:?}", mission.origin, e)),
+            Err(_) => MissionReport::Failure("Origin station radio died during assembly.".to_string()),
+        };
+
+        // 9. Send the final report back to the customer thread that requested it!
+        if let Some(reply_tx) = mission.reply_channel {
             let _ = reply_tx.send(report);
         }
-
-        // 6. Return ownership back to the network
-        self.stations.insert(origin_name.clone(), origin); 
-        self.stations.insert(dest_name.clone(), destination);
-
-
     }
 
 
