@@ -116,6 +116,10 @@ pub enum TrainError {
     MissionImpossible {
         reason: String,
     },
+    CarToPurgatory {
+        car_id: u32,
+        issues: String,
+    },
 }
 
 

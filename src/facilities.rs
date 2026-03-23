@@ -212,7 +212,7 @@ impl Railyard {
     }
 
     pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) -> Result<Vec<Cargo>, TrainError> {
-        let (engine, cars, id) = (train.engine,train.cars, train.id); // Destructure the "Gestalt"
+        let (engine, cars, id, mission_id) = (train.engine,train.cars, train.id, train.mission_id); // Destructure the "Gestalt"
 
         // 1. Return the Power
         roundhouse.house(engine);
@@ -241,7 +241,9 @@ impl Railyard {
                 } 
                 Err((homeless_car, e)) => {
                     println!("{RED}Train {}: Failed to process Car {} during disassembly: {:?}. Moving to purgatory.{RESET}", id, car_id_we_just_received, e);
-                    let rejected_asset = RejectedAsset::new(homeless_car, e, Some(train.mission_id.unwrap_or(0))); // We can fill in the timestamp later when we implement that feature.
+                    // Note: If train.mission_id is already an Option, you might just be able to pass it directly 
+                    // without wrapping it in Some() and unwrap_or(0), depending on your RejectedAsset signature!
+                    let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id); // We can fill in the timestamp later when we implement that feature.
                     self.purgatory.push(rejected_asset);
                 }
             }
@@ -430,15 +432,19 @@ impl Station {
                         let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
                         if let Err(send_error) = reply_to.send(result) {
                             if let Ok(phantom_train) = send_error.0 {
-                                let result = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train);
-                                    if let Err(e) = result {
-                                        println!("{RED}[{}] ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
-                                    }
+                                if let Err(e) = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train) {//TAKE HEART, TREY! You wrote this. (With help, of course.) You know it works! If we have to process a phantom train, it means the assembly failed after the engine was dispatched, so we have to return that engine to the roundhouse and move any attached cars into purgatory, since they were never officially "yours" to begin with. This is a bit of emergency triage to maintain internal consistency and prevent resource leaks in the system.
+                                    println!("{RED}[{}]STATION: ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
+                                }
+                                else {
+                                    println!("{GREEN}[{}]STATION: Successfully processed phantom train for failed assembly of mission {}.{RESET}", station_name, mission.id);
+                                }
                             }
                             println!(
                                 "{RED}[{}] DEAD-LETTER: assemble reply dropped (mission_id={}, request_id={}).{RESET}",
                                 station_name, mission.id, mission.request_id
                             );
+                        } else {
+                            println!("{GREEN}[{}]STATION: Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
                         }
                     },
                     StationCommand::ReceiveTrain { train, reply_to } => {
@@ -459,11 +465,11 @@ impl Station {
                             Ok(_) => Ok(()),
                             Err((homeless_car, issues)) => {
                                 let reason = format!("Car intake failed due to {:?}", &issues);
+                                let homeless_car_id = homeless_car.id;
+                                println!("{RED}Yard Error: Failed to intake Car {}: {:?}. Moving to purgatory.{RESET}", homeless_car_id, issues);
                                 let rejected_asset = RejectedAsset::new(homeless_car, issues, None);
                                 yard.purgatory.push(rejected_asset);
-                                Err(TrainError::MissionImpossible {
-                                    reason,
-                                })
+                                Err(TrainError::CarToPurgatory { car_id: homeless_car_id, issues: reason })
                             }
                         };
                         if reply_to.send(result).is_err() {
