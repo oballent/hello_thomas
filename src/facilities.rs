@@ -243,7 +243,7 @@ impl Railyard {
                     println!("{RED}Train {}: Failed to process Car {} during disassembly: {:?}. Moving to purgatory.{RESET}", id, car_id_we_just_received, e);
                     // Note: If train.mission_id is already an Option, you might just be able to pass it directly 
                     // without wrapping it in Some() and unwrap_or(0), depending on your RejectedAsset signature!
-                    let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id); // We can fill in the timestamp later when we implement that feature.
+                    let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id); //we do not need to unwrap_or(0) here because mission_id is already an Option in the Train struct, so we can pass it directly
                     self.purgatory.push(rejected_asset);
                 }
             }
@@ -495,13 +495,6 @@ impl Station {
                         println!("{BOLD}{RED}[{}] Termination command received. Shutting down station thread.{RESET}", station_name);
                         break; // Exit the loop to terminate the thread
                     },
-                }
-                //print a report for railyard, roundhouse, and warehouse after every command to track the internal state changes over time.
-                println!("{BOLD}{CYAN}[{}] Current Station Status:{RESET}", station_name);
-                yard.print_report(&roundhouse);
-                println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
-                for cargo in &warehouse.inventory {
-                    println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
                 }
 
             }

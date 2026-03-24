@@ -32,10 +32,6 @@ impl RailwayNetwork {
     }
     
 
-
-
-
-
     pub fn add_station(&mut self, station: Station) {
         // station.name is a String. We can clone it to use as the key, 
         // and move the actual station into the value.
@@ -65,20 +61,8 @@ impl RailwayNetwork {
         self.missions.get(mission_id)
     }
 
-    
 
-
-
-pub fn get_station_handle(&self, station_name: &String) -> Option<&Sender<StationCommand>> {
-    self.station_handles.get(station_name)
-}
-
-
-
-
-
-
-pub fn dispatch_train_across_network(&mut self, mission_id: u32) {
+pub fn dispatch_train_across_network(&self, mission_id: u32) {
         // 1. Get the Mission
         let mission = match self.missions.get(&mission_id) {
             Some(m) => m.clone(), // We clone it so we don't hold a lock on the HashMap
@@ -118,32 +102,39 @@ pub fn dispatch_train_across_network(&mut self, mission_id: u32) {
             reply_to: transit_tx,
         });
 
-        // 6. Block and wait for the Train to be built
-        let report = match transit_rx.recv() {
-            Ok(Ok(train)) => {
-                println!("{GREEN}Network: Train {} received from {}. Routing to {}...{RESET}", train.id, mission.origin, mission.destination);
-                
-                // 7. Train is built! Send it to the destination
-                let (arrival_tx, arrival_rx) = mpsc::channel::<Result<(), TrainError>>();
-                let _ = dest_tx.send(StationCommand::ReceiveTrain {
-                    train,
-                    reply_to: arrival_tx,
-                });
 
-                // 8. Wait for the Destination to confirm breakdown
-                match arrival_rx.recv() {
-                    Ok(Ok(_)) => MissionReport::Success(format!("Train arrived safely at {}", mission.destination)),
-                    _ => MissionReport::Failure("Train failed during receiving/disassembly.".to_string()),
-                }
-            },
-            Ok(Err(e)) => MissionReport::Failure(format!("Assembly failed at {}: {:?}", mission.origin, e)),
-            Err(_) => MissionReport::Failure("Origin station radio died during assembly.".to_string()),
-        };
+        //We will now create a conductor thread that will wait for the train to be built and then route it to the destination. This way, the Network can continue to process other missions while this one is in transit.
+        std::thread::spawn(move || {
 
-        // 9. Send the final report back to the customer thread that requested it!
-        if let Some(reply_tx) = mission.reply_channel {
-            let _ = reply_tx.send(report);
-        }
+            // 6. Block and wait for the Train to be built
+            let report = match transit_rx.recv() {
+                Ok(Ok(train)) => {
+                    println!("{GREEN}Network: Train {} received from {}. Routing to {}...{RESET}", train.id, mission.origin, mission.destination);
+                    
+                    // 7. Train is built! Send it to the destination
+                    let (arrival_tx, arrival_rx) = mpsc::channel::<Result<(), TrainError>>();
+                    let _ = dest_tx.send(StationCommand::ReceiveTrain {
+                        train,
+                        reply_to: arrival_tx.clone(),
+                    });
+
+                    // 8. Wait for the Destination to confirm breakdown
+                    match arrival_rx.recv() {
+                        Ok(Ok(_)) => MissionReport::Success(format!("Train arrived safely at {}", mission.destination)),
+                        _ => MissionReport::Failure("Train failed during receiving/disassembly.".to_string()),
+                    }
+                },
+                Ok(Err(e)) => MissionReport::Failure(format!("Assembly failed at {}: {:?}", mission.origin, e)),
+                Err(_) => MissionReport::Failure("Origin station radio died during assembly.".to_string()),
+            };
+
+            // 9. Send the final report back to the customer thread that requested it!
+            if let Some(reply_tx) = mission.reply_channel {
+                let _ = reply_tx.send(report);
+                let _ = dest_tx.send(StationCommand::PrintStatus); // Ask the destination station to print its status report after processing the train, so we can see the internal state changes that occurred as a result of this mission!
+            }
+            
+        });
     }
 
 

@@ -6,7 +6,8 @@ use crate::models::{Cargo, EngineType, Engine, TrainCar, Mission, MissionReport,
 use crate::facilities::Station;
 use crate::network::RailwayNetwork;
 
-use std::sync::mpsc;
+use core::net;
+use std::sync::{mpsc, Arc};
 use std::thread;
 
 const RESET: &str = "\x1b[0m";
@@ -55,12 +56,12 @@ fn main() {
 
     // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
     let (tx_reply, rx_reply) = mpsc::channel();
-
     tidmouth_incoming_cars.into_iter().for_each(|car| {
         match tidmouth.tx.send(StationCommand::IntakeCar { train_car: car, reply_to: tx_reply.clone() }) {
             Ok(_) => println!("Car successfully intaken by Tidmouth!"),
             Err(e) => println!("Failed to intake car: {:?}", e),
         }
+        // We will block and wait for Tidmouth to confirm that it has received the car before we send the next one. This simulates a more realistic process where the station needs to acknowledge receipt of each car before accepting the next one, and it also allows us to see the flow of messages between the main thread and the station more clearly in the console output.
         match rx_reply.recv() {
             Ok(result) => match result {
                 Ok(_) => println!("Tidmouth confirmed receipt of the car."),
@@ -87,10 +88,6 @@ fn main() {
     });
 
 
-
-
-
-
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
@@ -104,9 +101,7 @@ fn main() {
 
 
 
-
-
-    //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different station or control center sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
+    //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different controle center (or perhaps, a customer) sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
     let (tx, rx) = mpsc::channel();
 
     //Give a radio to a concurrent thread, Producer 1, to send out a mission update. Since tx is moved into the closure, we need to clone it for each thread that wants to send messages. This allows multiple threads to send messages through the same channel without ownership conflicts.
@@ -181,17 +176,6 @@ fn main() {
         network.add_mission(received_mission);//truth be told, a Mission is pretty cheap to clone, but we can also just move it into the network since we won't need to use it in the main thread after this point.
 
         network.dispatch_train_across_network(received_mission_id);
-
-        
-
-        // if let Some(origin) = network.get_station(&received_mission_origin){
-        //     origin.print_status();
-        // }
-        // if let Some(destination) = network.get_station(&received_mission_destination){
-        //     destination.print_status();
-        // }
-
-
     }
 
 }
