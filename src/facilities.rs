@@ -1,4 +1,4 @@
-use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo};
+use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, Location};
 use std::collections::{HashMap, VecDeque};
 
 use std::f32::consts::E;
@@ -281,7 +281,7 @@ impl Roundhouse {
             .pop_front()      // Take the one that's been waiting longest
     }
 
-    pub fn find_suitable_engine(&mut self, total_weight: u32, distance_km: u32) -> Option<Engine> {
+    pub fn find_suitable_engine(&mut self, total_weight: u32, distance_km: f64) -> Option<Engine> {
         
         // 1. The Escalation Roster (Weakest to Strongest)
         let roster = [
@@ -362,6 +362,8 @@ impl Warehouse {
 pub struct Station {
     pub name: String,
     pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
+    pub location: Location, // The station's location on the network (for distance calculations)
+    // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
 }
 
 fn assemble_train(
@@ -369,7 +371,7 @@ fn assemble_train(
     yard: &mut Railyard,
     roundhouse: &mut Roundhouse,
     mission: &Mission,
-    distance: u32,
+    distance: f64,
 ) -> Result<Train, TrainError> {
     println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", station_name, mission.id);
 
@@ -410,7 +412,7 @@ fn receive_train_internal(
 
 
 impl Station {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, location: Location) -> Self {
         // Create a channel for this station
         let (tx, rx): (Sender<StationCommand>, Receiver<StationCommand>) = mpsc::channel();
 
@@ -429,6 +431,27 @@ impl Station {
                 match command {
                     StationCommand::AssembleMission { mission, distance, reply_to } => {
                         println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
+                        match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance) {
+                            Ok(train) => {
+                                if let Err(e) = reply_to.send(Ok(train)) {
+                                    println!("{RED}[{}] DEAD-LETTER: Failed to send assembled train for mission {}. Error: {:?}{RESET}", station_name, mission.id, e);
+                                } else {
+                                    println!("{GREEN}[{}] Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
+                                }
+                            },
+                            Err(e) => {
+                                println!("{RED}[{}] Assembly failed for mission {}: {:?}{RESET}", station_name, mission.id, e);
+                                // We attempt to send the failure back to the network so it can handle it (like returning the engine if it was dispatched)
+                                if let Err(send_error) = reply_to.send(Err(e)) {
+                                    println!(
+                                        "{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {}. Error: {:?}{RESET}",
+                                        station_name, mission.id, send_error
+                                    );
+                                } else {
+                                    println!("{YELLOW}[{}] Successfully sent assembly failure for mission {} back to network.{RESET}", station_name, mission.id);
+                                }
+                            }
+                        }
                         let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
                         if let Err(send_error) = reply_to.send(result) {
                             if let Ok(phantom_train) = send_error.0 {
@@ -447,7 +470,7 @@ impl Station {
                             println!("{GREEN}[{}]STATION: Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
                         }
                     },
-                    StationCommand::ReceiveTrain { train, reply_to } => {
+                    StationCommand::ReceiveTrain {train, reply_to } => {
                         let result = receive_train_internal(
                             &station_name,
                             &mut yard,
@@ -457,6 +480,13 @@ impl Station {
                         );
                         if reply_to.send(result).is_err() {
                             println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
+                        }
+                        
+                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        yard.print_report(&roundhouse);
+                        println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
+                        for cargo in &warehouse.inventory {
+                            println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
                         }
                     },
                     StationCommand::IntakeCar { train_car, reply_to } => {
@@ -503,6 +533,7 @@ impl Station {
         Self {
             name: String::from(name),
             tx, // We return the sending end to the main thread so it can send commands to this station
+            location: location, // Store the station's location for distance calculations in the network
         }
     }
 

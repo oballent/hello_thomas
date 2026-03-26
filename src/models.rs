@@ -135,13 +135,13 @@ pub struct Engine {
 
 impl Engine {
     /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
-    pub fn calculate_fuel_requirement(&self, weight: u32, distance: u32) -> f32 {
+    pub fn calculate_fuel_requirement(&self, weight: u32, distance: f64) -> f32 {
         let work = weight as f32 * distance as f32;
         let quotient = self.engine_type.fuel_efficiency() * 5000.0;
         work / quotient
     }
 
-    pub fn can_complete_mission(&self, weight: u32, distance: u32) -> bool {
+    pub fn can_complete_mission(&self, weight: u32, distance: f64) -> bool {
         let needed = self.calculate_fuel_requirement(weight, distance);
         
         if needed > self.current_fuel {
@@ -153,10 +153,17 @@ impl Engine {
         }
     }
 
-    pub fn burn_fuel(&mut self, weight: u32, distance: u32) {
+    pub fn burn_fuel(&mut self, weight: u32, distance: f64) -> Result<(), TrainError> {
         let needed = self.calculate_fuel_requirement(weight, distance);
-        self.current_fuel -= needed;
-        println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
+        if needed > self.current_fuel {
+            Err(TrainError::MissionImpossible {
+                reason: format!("Engine {} needs {:.1}, has {:.1}", self.id, needed, self.current_fuel),
+            })
+        } else {
+            self.current_fuel -= needed;
+            println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
+            Ok(())
+        }
     }
 }
 
@@ -194,7 +201,7 @@ pub struct Train{
     pub id: u32,
     pub cars: Vec<TrainCar>,
     pub engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
-    pub distance_km: u32, // We can add more fields here as needed, like destination, mission details, etc.
+    pub distance_km: f64, // We can add more fields here as needed, like destination, mission details, etc.
     pub mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
 }
 
@@ -261,7 +268,7 @@ pub enum MissionReport {
 pub enum StationCommand {
     AssembleMission {
         mission: Mission,
-        distance: u32,
+        distance: f64,
         reply_to: Sender<Result<Train, TrainError>>,
     },
     ReceiveTrain {
@@ -278,4 +285,19 @@ pub enum StationCommand {
     },
     PrintStatus,                   // Reporting
     Terminate,                     // Graceful Shutdown
+}
+
+
+#[derive(Clone)]
+pub struct Location {
+    pub x: f64,
+    pub y: f64,
+}
+
+
+impl Location {
+    // A simple method to execute our math formula
+    pub fn distance_to(&self, other: &Location) -> f64 {
+        ((self.x - other.x).powi(2) + (self.y - other.y).powi(2)).sqrt()
+    }
 }

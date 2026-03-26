@@ -2,7 +2,7 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::models::{Cargo, EngineType, Engine, TrainCar, Mission, MissionReport, StationCommand};
+use crate::models::{Cargo, EngineType, Engine, TrainCar, Mission, MissionReport, StationCommand, Location};
 use crate::facilities::Station;
 use crate::network::RailwayNetwork;
 
@@ -24,8 +24,8 @@ fn main() {
     let mut network = RailwayNetwork::new();
 
     // 1. Instantiate the Stations locally
-    let tidmouth = Station::new("Tidmouth");
-    let brendam_docks = Station::new("Brendam Docks");
+    let tidmouth = Station::new("Tidmouth", Location { x: 0.0, y: 0.0 });
+    let brendam_docks = Station::new("Brendam Docks", Location { x: 250.0, y: 0.0 });
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -91,8 +91,8 @@ fn main() {
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-    network.add_tracks(&tidmouth, &brendam_docks, 250);
-    network.add_tracks(&brendam_docks, &tidmouth, 250); // We can add the reverse route too, since Sodor is not a one-way street!
+    network.add_tracks(&tidmouth, &brendam_docks);
+    network.add_tracks(&brendam_docks, &tidmouth); // We can add the reverse route too, since Sodor is not a one-way street!
 
     // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
     network.add_station(tidmouth);
@@ -112,42 +112,28 @@ fn main() {
 
     println!("{YELLOW}System Online. Spawning independent customer threads...{RESET}");
 
-    
-    // 2. Create Mission 1 (Tidmouth to Docks) and Mission 2 (Docks to Tidmouth)
-    // Make sure you include the `reply_channel` setup for both!
-    let (tx_reply1, rx_reply1) = mpsc::channel();
-    let mut mission1 = Mission { 
-        id: 1, 
-        request_id: 1001,
-        origin: String::from("Tidmouth"), 
-        destination: String::from("Brendam Docks"), 
-        required_cars: vec![2, 4], 
-        reply_channel: Some(tx_reply1) 
-    };
-
-    let (tx_reply2, rx_reply2) = mpsc::channel();
-    let mut mission2 = Mission{
-        id:2, 
-        request_id: 2002,
-        origin: String::from("Tidmouth"),
-        destination: String::from("Brendam Docks"),
-        required_cars: vec![6],
-        reply_channel: Some(tx_reply2)
-    };
-
-    network.add_mission(mission1.clone());
-    network.add_mission(mission2.clone());
-
 
     // 1. Wrap the Network in an Arc so multiple threads can share it!
     let shared_network = Arc::new(network);
+
+
 
     // 3. Spawn Producer 1
     let network_clone_1 = Arc::clone(&shared_network);
     thread::spawn(move || {
         println!("Producer 1: Submitting Mission 1 to the Network...");
+        // The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
+        let (tx_reply1, rx_reply1) = mpsc::channel();
+        let mut mission1 = Mission { 
+            id: 1, 
+            request_id: 1001,
+            origin: String::from("Tidmouth"), 
+            destination: String::from("Brendam Docks"), 
+            required_cars: vec![2, 4], 
+            reply_channel: Some(tx_reply1) 
+        };
         // Network creates the Conductor in the background!
-        network_clone_1.dispatch_train_across_network(mission1.id); 
+        network_clone_1.dispatch_train_across_network(mission1); 
         
         // Wait for the final report from the Conductor
         if let Ok(report) = rx_reply1.recv() {
@@ -158,8 +144,19 @@ fn main() {
     // 4. Spawn Producer 2
     let network_clone_2 = Arc::clone(&shared_network);
     thread::spawn(move || {
+        // Same thing for Producer 2, but with a different mission!
+        let (tx_reply2, rx_reply2) = mpsc::channel();
+        let mut mission2 = Mission{
+            id:2, 
+            request_id: 2002,
+            origin: String::from("Tidmouth"),
+            destination: String::from("Brendam Docks"),
+            required_cars: vec![6],
+            reply_channel: Some(tx_reply2)
+        };
+
         println!("Producer 2: Submitting Mission 2 to the Network...");
-        network_clone_2.dispatch_train_across_network(mission2.id); 
+        network_clone_2.dispatch_train_across_network(mission2); 
         
         if let Ok(report) = rx_reply2.recv() {
             println!("Producer 2 received report: {:?}", report);
@@ -183,7 +180,7 @@ fn main() {
 
 
 
-
+    // //Threads and Wormholes: To demonstrate the physics of Rust and Networking, we will establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different controle center (or perhaps, a customer) sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
 
     // //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different controle center (or perhaps, a customer) sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
     // let (tx, rx) = mpsc::channel();
@@ -255,8 +252,6 @@ fn main() {
     //     println!{"Main thread received mission updated: {:?}", received_mission};
 
     //     let received_mission_id = received_mission.id;
-    //     let received_mission_origin = received_mission.origin.clone();
-    //     let received_mission_destination = received_mission.destination.clone();
     //     network.add_mission(received_mission);//truth be told, a Mission is pretty cheap to clone, but we can also just move it into the network since we won't need to use it in the main thread after this point.
 
     //     network.dispatch_train_across_network(received_mission_id);
