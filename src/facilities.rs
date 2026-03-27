@@ -188,6 +188,7 @@ impl Railyard {
         }
 
         if !missing_ids.is_empty() {
+            println!("{RED}Yard: Total cargo weight for Mission {} is {}kg.{RESET}", mission.id, total_weight);
             return Err(TrainError::AssemblyFailed { 
                 missing_car_ids: missing_ids, 
                 engine_returned: 0 
@@ -281,7 +282,7 @@ impl Roundhouse {
             .pop_front()      // Take the one that's been waiting longest
     }
 
-    pub fn find_suitable_engine(&mut self, total_weight: u32, distance_km: f64) -> Option<Engine> {
+    pub fn find_suitable_engine(&mut self, total_weight: u32, distance_km: f64) -> Result<Engine, TrainError> {
         
         // 1. The Escalation Roster (Weakest to Strongest)
         let roster = [
@@ -295,6 +296,7 @@ impl Roundhouse {
         for etype in roster {
             // Check if this TYPE is physically strong enough
             if etype.max_capacity() >= total_weight {
+                println!("{YELLOW}Roundhouse: Checking for available {:?} engines...{RESET}", etype);
                 
                 // If it is, look inside that specific stall
                 if let Some(queue) = self.stalls.get_mut(&etype) {
@@ -308,15 +310,16 @@ impl Roundhouse {
                     // If position returned Some(index), and_then passes that index into queue.remove()
                     if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
                         println!("{GREEN}Roundhouse: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", engine.id, engine.engine_type, total_weight, distance_km);
-                        return Some(engine);
+                        return Ok(engine);
                     }
                 }
 
             }
         }
         
-        // If we loop through the whole roster and find nothing, return None.
-        None
+        // If we loop through the whole roster and find nothing, return an error.
+        println!("{RED}Roundhouse: No suitable engines available for mission ({}kg over {}km).{RESET}", total_weight, distance_km);
+        Err(TrainError::MissionImpossible { reason: "NO ENGINES CAN COMPLETE MISSION!".to_string() })
     }
 }
 
@@ -376,9 +379,19 @@ fn assemble_train(
     println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", station_name, mission.id);
 
     let total_weight = yard.get_total_cargo_weight(mission)?;
-    let engine = roundhouse
-        .find_suitable_engine(total_weight, distance)
-        .ok_or(TrainError::NoAvailableEngine)?;
+    let engine = match roundhouse.find_suitable_engine(total_weight, distance) {
+        Ok(engine) => engine,
+        Err(e) => {
+            println!("{RED}[{}] Assembly failed for Mission {}: {:?}{RESET}", station_name, mission.id, e);
+            return Err(TrainError::AssemblyFailed { 
+                missing_car_ids: Vec::new(), // We know the cars are there, so this is not a missing car issue
+                engine_returned: 0 // No engine was dispatched, so nothing to return
+            });
+        }
+    };
+    // let engine = roundhouse
+    //     .find_suitable_engine(total_weight, distance)
+    //     .ok_or(TrainError::NoAvailableEngine)?;
     let attached_cars: Vec<TrainCar> = yard.assemble_cars(mission)?;
 
     Ok(Train {
@@ -452,23 +465,23 @@ impl Station {
                                 }
                             }
                         }
-                        let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
-                        if let Err(send_error) = reply_to.send(result) {
-                            if let Ok(phantom_train) = send_error.0 {
-                                if let Err(e) = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train) {//TAKE HEART, TREY! You wrote this. (With help, of course.) You know it works! If we have to process a phantom train, it means the assembly failed after the engine was dispatched, so we have to return that engine to the roundhouse and move any attached cars into purgatory, since they were never officially "yours" to begin with. This is a bit of emergency triage to maintain internal consistency and prevent resource leaks in the system.
-                                    println!("{RED}[{}]STATION: ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
-                                }
-                                else {
-                                    println!("{GREEN}[{}]STATION: Successfully processed phantom train for failed assembly of mission {}.{RESET}", station_name, mission.id);
-                                }
-                            }
-                            println!(
-                                "{RED}[{}] DEAD-LETTER: assemble reply dropped (mission_id={}, request_id={}).{RESET}",
-                                station_name, mission.id, mission.request_id
-                            );
-                        } else {
-                            println!("{GREEN}[{}]STATION: Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
-                        }
+                        // let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
+                        // if let Err(send_error) = reply_to.send(result) {
+                        //     if let Ok(phantom_train) = send_error.0 {
+                        //         if let Err(e) = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train) {//TAKE HEART, TREY! You wrote this. (With help, of course.) You know it works! If we have to process a phantom train, it means the assembly failed after the engine was dispatched, so we have to return that engine to the roundhouse and move any attached cars into purgatory, since they were never officially "yours" to begin with. This is a bit of emergency triage to maintain internal consistency and prevent resource leaks in the system.
+                        //             println!("{RED}[{}]STATION: ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
+                        //         }
+                        //         else {
+                        //             println!("{GREEN}[{}]STATION: Successfully processed phantom train for failed assembly of mission {}.{RESET}", station_name, mission.id);
+                        //         }
+                        //     }
+                        //     println!(
+                        //         "{RED}[{}] DEAD-LETTER: assemble reply dropped (mission_id={}, request_id={}).{RESET}",
+                        //         station_name, mission.id, mission.request_id
+                        //     );
+                        // } else {
+                        //     println!("{GREEN}[{}]STATION: Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
+                        // }
                     },
                     StationCommand::ReceiveTrain {train, reply_to } => {
                         let result = receive_train_internal(

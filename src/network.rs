@@ -80,7 +80,13 @@ pub fn dispatch_train_across_network(&self, mission: Mission) {
 
         // 2. Get the Distance
         let distance = match self.get_distance(&mission.origin, &mission.destination) {
-            Some(d) => d,
+            Some(d) => {
+                println!(
+                    "{YELLOW}The distance is {} km between {} and {}.{RESET}",
+                    d, mission.origin, mission.destination
+                );
+                d
+            },
             None => {
                 println!("{RED}Error: No track laid between {} and {}.{RESET}", mission.origin, mission.destination);
                 return;
@@ -89,17 +95,29 @@ pub fn dispatch_train_across_network(&self, mission: Mission) {
 
         // 3. Find the Origin and Destination Radios
         let origin_tx = match self.station_handles.get(&mission.origin) {
-            Some(tx) => tx.clone(),
-            None => return,
+            Some(tx) =>{
+                println!("{GREEN}Network: Found radio transmitter for origin station {}.{RESET}", mission.origin);
+                tx.clone()
+            }
+            None => {
+                println!("{RED}Network Error: No radio transmitter found for origin station {}.{RESET}", mission.origin);
+                return;
+            }
         };
         let dest_tx = match self.station_handles.get(&mission.destination) {
-            Some(tx) => tx.clone(),
-            None => return,
-        };
+            Some(tx) => {
+                println!("{GREEN}Network: Found radio transmitter for destination station {}.{RESET}", mission.destination);
+                tx.clone()
+            }
 
+            None => {
+                println!("{RED}Network Error: No radio transmitter found for destination station {}.{RESET}", mission.destination);
+                return;
+            }
+        };
         // 4. Create the Transit Channel (The radio frequency the Origin will use to send the Train to the Network)
         let (transit_tx, transit_rx) = mpsc::channel::<Result<Train, TrainError>>();
-
+        
         // 5. Send the command to the Origin!
         println!("{YELLOW}Network: Ordering {} to assemble Mission {}.{RESET}", mission.origin, mission.id);
         let _ = origin_tx.send(StationCommand::AssembleMission {

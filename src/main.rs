@@ -24,8 +24,13 @@ fn main() {
     let mut network = RailwayNetwork::new();
 
     // 1. Instantiate the Stations locally
-    let tidmouth = Station::new("Tidmouth", Location { x: 0.0, y: 0.0 });
-    let brendam_docks = Station::new("Brendam Docks", Location { x: 250.0, y: 0.0 });
+    let tidmouth = Station::new("Tidmouth", Location { x: 100.0, y: 100.0 });
+    let brendam_docks = Station::new("Brendam Docks", Location { x: 100.0, y: 350.0 });
+    let knapford = Station::new("Knapford", Location { x: 300.0, y: 100.0 });
+    let welsworth = Station::new("Welsworth", Location { x: 300.0, y: 350.0 });
+    let maron = Station::new("Maron", Location { x: 500.0, y: 100.0 });
+    let vicarstown = Station::new("Vicarstown", Location { x: 500.0, y: 350.0 });
+    let peel_godred = Station::new("Peel Godred", Location { x: 700.0, y: 100.0 });
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -91,12 +96,25 @@ fn main() {
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-    network.add_tracks(&tidmouth, &brendam_docks);
-    network.add_tracks(&brendam_docks, &tidmouth); // We can add the reverse route too, since Sodor is not a one-way street!
+    network.add_tracks(&tidmouth, &brendam_docks); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
 
-    // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
+    // network.add_tracks(&tidmouth, &knapford);
+    // network.add_tracks(&tidmouth, &peel_godred);
+    // network.add_tracks(&knapford, &welsworth);
+    // network.add_tracks(&knapford, &maron);
+    // network.add_tracks(&welsworth, &brendam_docks);
+    // network.add_tracks(&welsworth, &maron);
+    // network.add_tracks(&maron, &vicarstown);
+
+    // // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
     network.add_station(tidmouth);
     network.add_station(brendam_docks);
+    // network.add_station(knapford);
+    // network.add_station(welsworth);
+    // network.add_station(maron);
+    // network.add_station(vicarstown);
+    // network.add_station(peel_godred);
+
 
 
 
