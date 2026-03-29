@@ -96,24 +96,24 @@ fn main() {
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-    network.add_tracks(&tidmouth, &brendam_docks); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
 
-    // network.add_tracks(&tidmouth, &knapford);
-    // network.add_tracks(&tidmouth, &peel_godred);
-    // network.add_tracks(&knapford, &welsworth);
-    // network.add_tracks(&knapford, &maron);
-    // network.add_tracks(&welsworth, &brendam_docks);
-    // network.add_tracks(&welsworth, &maron);
-    // network.add_tracks(&maron, &vicarstown);
+    network.add_tracks(&tidmouth, &knapford);
+    //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
+    network.add_tracks(&tidmouth, &peel_godred);
+    network.add_tracks(&knapford, &welsworth);
+    network.add_tracks(&knapford, &maron);
+    network.add_tracks(&welsworth, &brendam_docks);
+    network.add_tracks(&welsworth, &maron);
+    network.add_tracks(&maron, &vicarstown);
 
     // // 3. Now that the metadata is extracted, move the Stations into the Network's ownership
     network.add_station(tidmouth);
     network.add_station(brendam_docks);
-    // network.add_station(knapford);
-    // network.add_station(welsworth);
-    // network.add_station(maron);
-    // network.add_station(vicarstown);
-    // network.add_station(peel_godred);
+    network.add_station(knapford);
+    network.add_station(welsworth);
+    network.add_station(maron);
+    network.add_station(vicarstown);
+    network.add_station(peel_godred);
 
 
 
@@ -184,6 +184,8 @@ fn main() {
     // 5. Keep the main thread alive long enough to watch the magic happen
     // (In a real server, this would be an infinite sleep or a join)
     thread::sleep(std::time::Duration::from_secs(2));
+    let route = shared_network.find_shortest_path("Tidmouth", "Vicarstown");
+    println!("Shortest route from Tidmouth to Vicarstown: {:?}", route);
     println!("{BOLD}{GREEN}Simulation Complete.{RESET}");
 
 
