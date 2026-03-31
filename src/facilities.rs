@@ -1,7 +1,9 @@
 use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, Location};
+use crate::network::RailwayNetwork;
 use std::collections::{HashMap, VecDeque};
 
 use std::f32::consts::E;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 use crate::models::StationCommand;
@@ -362,9 +364,17 @@ impl Warehouse {
 //     pub roundhouse: Roundhouse,
 // }
 
+// This is JUST data. No threads, no channels, no logic.
+    pub struct StationMetadata {
+        pub name: String,
+        pub location: Location,
+
+    }
+
 pub struct Station {
     pub name: String,
     pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
+    pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
     pub location: Location, // The station's location on the network (for distance calculations)
     // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
 }
@@ -375,6 +385,8 @@ fn assemble_train(
     roundhouse: &mut Roundhouse,
     mission: &Mission,
     distance: f64,
+    route: Vec<String>,
+    destination: String,
 ) -> Result<Train, TrainError> {
     println!("{BOLD}{CYAN}[{}] Orchestrating Assembly for Mission {}...{RESET}", station_name, mission.id);
 
@@ -400,6 +412,9 @@ fn assemble_train(
         cars: attached_cars,
         distance_km: distance,
         mission_id: Some(mission.id),
+        route_to_destination: route, // This will be filled in by the network when the train is dispatched
+        destination: destination, // This will also be filled in by the network
+        report_to: mission.reply_channel.clone(), // The train can use this channel to send updates back to the mission
     })
 }
 
@@ -425,15 +440,18 @@ fn receive_train_internal(
 
 
 impl Station {
-    pub fn new(name: &str, location: Location) -> Self {
+    pub fn new(name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>)// -> Self {
+    {
         // Create a channel for this station
-        let (tx, rx): (Sender<StationCommand>, Receiver<StationCommand>) = mpsc::channel();
+        //let (tx, rx): (Sender<StationCommand>, Receiver<StationCommand>) = mpsc::channel();
 
         // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
         let mut roundhouse = Roundhouse::new();
         let mut yard = Railyard::new();
         let mut warehouse = Warehouse::new();
         let station_name = String::from(name);
+        let tx = map.get_station_handle(&station_name).expect("Station handle must exist").clone();
+
         // Spawn a thread to run the station's internal loop
         thread::spawn(move || {
             // The station's internal state
@@ -442,15 +460,45 @@ impl Station {
             // The station's main loop
             for command in rx {
                 match command {
-                    StationCommand::AssembleMission { mission, distance, reply_to } => {
+                    StationCommand::AssembleMission { mission, distance, route, destination, reply_to } => {
                         println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
-                        match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance) {
+                        match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance, route, destination) {
                             Ok(train) => {
-                                if let Err(e) = reply_to.send(Ok(train)) {
-                                    println!("{RED}[{}] DEAD-LETTER: Failed to send assembled train for mission {}. Error: {:?}{RESET}", station_name, mission.id, e);
-                                } else {
-                                    println!("{GREEN}[{}] Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
+                                if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
+                                    let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
+                                    let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network");
+                                    let (transit_tx, transit_rx) = mpsc::channel();
+                                    println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {} -> {}{RESET}", station_name, train.id, station_name, route.join(" -> "));
+
+                                    
+                                    let train_id = train.id; // Store the train ID for logging inside the thread
+                                    next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+
+
+                                    let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
+                                    // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
+                                    thread::spawn(move || {
+                                        match transit_rx.recv() {
+                                            Ok(result) => {
+                                                if let Err(e) = result {
+                                                    println!("{RED}[{}] ERROR during transit of Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                                                } else {
+                                                    println!("{GREEN}[{}] Train {} successfully arrived at next stop. Sending receive command...{RESET}", station_name_clone, train_id);
+                                                }
+                                            },
+                                            Err(e) => {
+                                                println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                                            }
+                                        }
+                                    });
+                                    
                                 }
+
+                                // if let Err(e) = reply_to.send(Ok(train)) {
+                                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembled train for mission {}. Error: {:?}{RESET}", station_name, mission.id, e);
+                                // } else {
+                                //     println!("{GREEN}[{}] Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
+                                // }
                             },
                             Err(e) => {
                                 println!("{RED}[{}] Assembly failed for mission {}: {:?}{RESET}", station_name, mission.id, e);
@@ -484,23 +532,42 @@ impl Station {
                         // }
                     },
                     StationCommand::ReceiveTrain {train, reply_to } => {
-                        let result = receive_train_internal(
-                            &station_name,
-                            &mut yard,
-                            &mut roundhouse,
-                            &mut warehouse,
-                            train,
-                        );
-                        if reply_to.send(result).is_err() {
-                            println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
+
+
+                        if station_name == train.destination {
+                            println!("{BOLD}{GREEN}[{}] Train {} has arrived at its destination! No route needed.{RESET}", station_name, train.id);
+                            
+                            let result = receive_train_internal(
+                                &station_name,
+                                &mut yard,
+                                &mut roundhouse,
+                                &mut warehouse,
+                                train,
+                            );
+                            if reply_to.send(result).is_err() {
+                                println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
+                            }
+                            
+                            println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                            yard.print_report(&roundhouse);
+                            println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
+                            for cargo in &warehouse.inventory {
+                                println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
+                            }
+
+
+                      
+                        } else {
+                            
+                            if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
+                                let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
+                                let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network");
+                                println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {} -> {}{RESET}", station_name, train.id, station_name, route.join(" -> "));
+                                next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
+                            }
                         }
-                        
-                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
-                        yard.print_report(&roundhouse);
-                        println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
-                        for cargo in &warehouse.inventory {
-                            println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
-                        }
+
+
                     },
                     StationCommand::IntakeCar { train_car, reply_to } => {
                         println!("{BOLD}{CYAN}[{}] Received command to intake a new car into the yard.{RESET}", station_name);
@@ -542,12 +609,13 @@ impl Station {
 
             }
         });
-        // The thread will run an infinite loop, waiting for commands to arrive on the rx channel, and processing them as they come in. This is where the station's internal logic will live, and it will have access to its own yard, roundhouse, and warehouse to manage its operations.
-        Self {
-            name: String::from(name),
-            tx, // We return the sending end to the main thread so it can send commands to this station
-            location: location, // Store the station's location for distance calculations in the network
-        }
+        
+        // Self {
+        //     name: String::from(name),
+        //     //tx, // We return the sending end to the main thread so it can send commands to this station
+        //     map, // Store the shared network map for the station to access
+        //     //location: location, // Store the station's location for distance calculations in the network
+        // }
     }
 
 
