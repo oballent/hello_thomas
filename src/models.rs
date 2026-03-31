@@ -100,6 +100,15 @@ impl EngineType {
             EngineType::Gordon => 0.18, // Powerful, but a gas guzzler
         }
     }
+
+    pub fn speed(&self) -> u32 {
+        match self {
+            EngineType::Percy => 40*6,
+            EngineType::Thomas => 60*6,
+            EngineType::Gordon => 80*6,
+            EngineType::Diesel => 70*6,
+        }
+    }
 }
 
 
@@ -221,14 +230,14 @@ impl Train {
     
 
     // Notice the &mut self. The train is 'taking damage' (burning fuel).
-    pub fn dispatch(&mut self) -> Result<(), TrainError> {
-        println!("Train {} is departing for ({}km)...", self.id, self.distance_km);
+    pub fn dispatch(&mut self, distance_to_next_stop: f64) -> Result<(), TrainError> {
+        println!("Train {} is departing for ({}km)...", self.id, distance_to_next_stop);
         
         // 1. Calculate the final weight
         let total_weight = self.calculate_cargo_weight();
         
         // 2. The Consequence
-        self.engine.burn_fuel(total_weight, self.distance_km);
+        self.engine.burn_fuel(total_weight, distance_to_next_stop)?;
         
 
         Ok(())

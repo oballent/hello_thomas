@@ -1,4 +1,4 @@
-use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, Location};
+use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, Location, MissionReport};
 use crate::network::RailwayNetwork;
 use std::collections::{HashMap, VecDeque};
 
@@ -430,6 +430,11 @@ fn receive_train_internal(
         station_name, train.id
     );
 
+    train.report_to.as_ref().map(|sender| {
+        sender.send(MissionReport::Success(format!("Train {} has arrived at station {}.", train.id, station_name)))
+            .unwrap_or_else(|e| println!("{RED}[{}] Failed to send arrival report for Train {}: {:?}{RESET}", station_name, train.id, e));
+    });
+
     let payloads = yard.disassemble_train(train, roundhouse)?;
     for cargo in payloads {
         warehouse.store(cargo);
@@ -463,21 +468,30 @@ impl Station {
                     StationCommand::AssembleMission { mission, distance, route, destination, reply_to } => {
                         println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
                         match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance, route, destination) {
-                            Ok(train) => {
+                            Ok(mut train) => {
                                 if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
                                     let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
-                                    let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network");
+                                    let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+                                    let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
                                     let (transit_tx, transit_rx) = mpsc::channel();
-                                    println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {} -> {}{RESET}", station_name, train.id, station_name, route.join(" -> "));
+                                    println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id, route.join(" -> "));
 
                                     
                                     let train_id = train.id; // Store the train ID for logging inside the thread
-                                    next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+                                    
 
 
                                     let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
                                     // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
                                     thread::spawn(move || {
+                                        train.dispatch(distance_to_next_stop).expect("Failed to dispatch train");// This simulates the train traveling to the next station. In a real implementation, you would have more complex logic here to handle the train's movement and interactions with the network.
+                                        let speed = train.engine.engine_type.speed();
+                                        let time = distance_to_next_stop / (speed as f64); // simulates miles per second
+                                        println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+                                        thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+                                        next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+
+
                                         match transit_rx.recv() {
                                             Ok(result) => {
                                                 if let Err(e) = result {
@@ -513,25 +527,8 @@ impl Station {
                                 }
                             }
                         }
-                        // let result = assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance);
-                        // if let Err(send_error) = reply_to.send(result) {
-                        //     if let Ok(phantom_train) = send_error.0 {
-                        //         if let Err(e) = receive_train_internal(&station_name, &mut yard, &mut roundhouse, &mut warehouse, phantom_train) {//TAKE HEART, TREY! You wrote this. (With help, of course.) You know it works! If we have to process a phantom train, it means the assembly failed after the engine was dispatched, so we have to return that engine to the roundhouse and move any attached cars into purgatory, since they were never officially "yours" to begin with. This is a bit of emergency triage to maintain internal consistency and prevent resource leaks in the system.
-                        //             println!("{RED}[{}]STATION: ERROR DURING PHANTOM TRAIN PROCESSING: {:?}{RESET}", station_name, e);
-                        //         }
-                        //         else {
-                        //             println!("{GREEN}[{}]STATION: Successfully processed phantom train for failed assembly of mission {}.{RESET}", station_name, mission.id);
-                        //         }
-                        //     }
-                        //     println!(
-                        //         "{RED}[{}] DEAD-LETTER: assemble reply dropped (mission_id={}, request_id={}).{RESET}",
-                        //         station_name, mission.id, mission.request_id
-                        //     );
-                        // } else {
-                        //     println!("{GREEN}[{}]STATION: Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
-                        // }
                     },
-                    StationCommand::ReceiveTrain {train, reply_to } => {
+                    StationCommand::ReceiveTrain {mut train, reply_to } => {
 
 
                         if station_name == train.destination {
@@ -561,9 +558,28 @@ impl Station {
                             
                             if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
                                 let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
-                                let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network");
-                                println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {} -> {}{RESET}", station_name, train.id, station_name, route.join(" -> "));
-                                next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
+                                let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+                                let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
+                                println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id,  route.join(" -> "));
+                                
+                                
+                                    
+                                    let train_id = train.id; // Store the train ID for logging inside the thread
+                                    
+
+
+                                    let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
+                                    // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
+                                    thread::spawn(move || {
+                                        train.dispatch(distance_to_next_stop).expect("Failed to dispatch train");// This simulates the train traveling to the next station. In a real implementation, you would have more complex logic here to handle the train's movement and interactions with the network.
+                                        let speed = train.engine.engine_type.speed();
+                                        let time = distance_to_next_stop / (speed as f64); // simulates miles per second
+                                        println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+                                        thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+                                        
+                                
+                                        next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
+                                    });
                             }
                         }
 
@@ -610,12 +626,6 @@ impl Station {
             }
         });
         
-        // Self {
-        //     name: String::from(name),
-        //     //tx, // We return the sending end to the main thread so it can send commands to this station
-        //     map, // Store the shared network map for the station to access
-        //     //location: location, // Store the station's location for distance calculations in the network
-        // }
     }
 
 

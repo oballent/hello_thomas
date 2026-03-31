@@ -171,7 +171,7 @@ fn main() {
 
     // 3. Spawn Producer 1
     let network_clone_1 = Arc::clone(&shared_network);
-    thread::spawn(move || {
+    let producer_1_handle = thread::spawn(move || {
         println!("Producer 1: Submitting Mission 1 to the Network...");
         // The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
         let (tx_reply1, rx_reply1) = mpsc::channel();
@@ -194,7 +194,7 @@ fn main() {
 
     // 4. Spawn Producer 2
     let network_clone_2 = Arc::clone(&shared_network);
-    thread::spawn(move || {
+    let producer_2_handle = thread::spawn(move || {
         // Same thing for Producer 2, but with a different mission!
         let (tx_reply2, rx_reply2) = mpsc::channel();
         let mut mission2 = Mission{
@@ -214,9 +214,10 @@ fn main() {
         }
     });
 
-    // 5. Keep the main thread alive long enough to watch the magic happen
-    // (In a real server, this would be an infinite sleep or a join)
-    thread::sleep(std::time::Duration::from_secs(2));
+    // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
+    println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
+        producer_1_handle.join().unwrap();
+        producer_2_handle.join().unwrap();
     let route = shared_network.find_shortest_path("Tidmouth", "Vicarstown");
     println!("Shortest route from Tidmouth to Vicarstown: {:?}", route);
     println!("{BOLD}{GREEN}Simulation Complete.{RESET}");
