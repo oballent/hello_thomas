@@ -129,6 +129,10 @@ pub enum TrainError {
         car_id: u32,
         issues: String,
     },
+    Derailment {
+        train_id: u32,
+        reason: String,
+    },
 }
 
 

@@ -218,8 +218,6 @@ fn main() {
     println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
         producer_1_handle.join().unwrap();
         producer_2_handle.join().unwrap();
-    let route = shared_network.find_shortest_path("Tidmouth", "Vicarstown");
-    println!("Shortest route from Tidmouth to Vicarstown: {:?}", route);
     println!("{BOLD}{GREEN}Simulation Complete.{RESET}");
 
 

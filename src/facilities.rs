@@ -580,6 +580,32 @@ impl Station {
                                 
                                         next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
                                     });
+                            } else {
+                                // THE END OF THE LINE: Emergency Breakdown
+                                println!("{BOLD}{RED}[{}] CRITICAL: Track failure! No route to {}. Train {} is stranded!{RESET}", 
+                                    station_name, train.destination, train.id);
+
+                                // 1. Mail the bad news back to the Producer so they don't block forever
+                                train.report_to.as_ref().map(|sender| {
+                                    let _ = sender.send(MissionReport::Failure(
+                                        format!("Train {} stranded at {}. Track network failure to {}.", 
+                                            train.id, station_name, train.destination)
+                                    ));
+                                });
+
+                                // 2. Perform an emergency local breakdown
+                                println!("{YELLOW}[{}] Initiating emergency breakdown to recover assets...{RESET}", station_name);
+                                match yard.disassemble_train(train, &mut roundhouse) {
+                                    Ok(payloads) => {
+                                        // 3. Store the stranded cargo in the local warehouse
+                                        for cargo in payloads {
+                                            println!("{YELLOW}[{}] EMERGENCY STORAGE: Stowing {} ({}kg) in local warehouse.{RESET}", 
+                                                station_name, cargo.item, cargo.actual_weight);
+                                            warehouse.store(cargo);
+                                        }
+                                    },
+                                    Err(e) => println!("{RED}[{}] Disassembly failed during emergency breakdown: {:?}{RESET}", station_name, e),
+                                }
                             }
                         }
 
