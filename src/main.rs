@@ -17,8 +17,8 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
-// This program demonstrates the physics of Rust and Networking in the context of a train yard on the Island of Sodor. It models the interactions between trains, engines, cars, cargo, and stations, while also showcasing how ownership and borrowing work in Rust to manage complex state and ensure memory safety. The program also includes a simple representation of a railway network with tracks connecting different stations, allowing for the dispatch and routing of trains across the island. Through this simulation, we can explore how Rust's unique features enable us to build a robust and efficient system that mimics real-world logistics and transportation challenges.
-
+// This program demonstrates the physics of Rust and Networking in the context of a train yard on the Island of Sodor. It has evolved from a simple simulation of trains moving between stations to a more complex system that includes concurrent producer threads submitting missions to a central network, which then dispatches trains across the network to fulfill those missions. The program uses Rust's ownership model, concurrency primitives, and error handling to create a robust and realistic simulation of a railway network.
+// I AM The Fat Controller, and I approve this message: All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
 
 fn main() {
     let mut network = RailwayNetwork::new();

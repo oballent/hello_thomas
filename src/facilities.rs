@@ -22,8 +22,6 @@ pub struct Railyard {
     pub cars: HashMap<u32, TrainCar>,
     pub next_train_id: u32,
     pub purgatory: Vec<RejectedAsset>,
-    //cargo: Vec<Cargo>,
-
 }
 
 
@@ -36,7 +34,6 @@ impl Railyard {
             cars: HashMap::new(),
             next_train_id: 1,
             purgatory: Vec::new(),
-            //cargo: Vec::new(),
         }
     }
 
@@ -356,14 +353,6 @@ impl Warehouse {
 
 
 
-
-// pub struct Station {
-//     pub name: String,
-//     pub yard: Railyard,
-//     pub warehouse: Warehouse,
-//     pub roundhouse: Roundhouse,
-// }
-
 // This is JUST data. No threads, no channels, no logic.
     pub struct StationMetadata {
         pub name: String,
@@ -401,9 +390,6 @@ fn assemble_train(
             });
         }
     };
-    // let engine = roundhouse
-    //     .find_suitable_engine(total_weight, distance)
-    //     .ok_or(TrainError::NoAvailableEngine)?;
     let attached_cars: Vec<TrainCar> = yard.assemble_cars(mission)?;
 
     Ok(Train {
@@ -445,11 +431,8 @@ fn receive_train_internal(
 
 
 impl Station {
-    pub fn new(name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>)// -> Self {
-    {
+    pub fn new(name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
         // Create a channel for this station
-        //let (tx, rx): (Sender<StationCommand>, Receiver<StationCommand>) = mpsc::channel();
-
         // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
         let mut roundhouse = Roundhouse::new();
         let mut yard = Railyard::new();
@@ -508,11 +491,6 @@ impl Station {
                                     
                                 }
 
-                                // if let Err(e) = reply_to.send(Ok(train)) {
-                                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembled train for mission {}. Error: {:?}{RESET}", station_name, mission.id, e);
-                                // } else {
-                                //     println!("{GREEN}[{}] Successfully assembled train for mission {}. Reply sent to network.{RESET}", station_name, mission.id);
-                                // }
                             },
                             Err(e) => {
                                 println!("{RED}[{}] Assembly failed for mission {}: {:?}{RESET}", station_name, mission.id, e);
