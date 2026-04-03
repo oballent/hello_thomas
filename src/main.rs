@@ -18,7 +18,7 @@ const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
 // This program demonstrates the physics of Rust and Networking in the context of a train yard on the Island of Sodor. It has evolved from a simple simulation of trains moving between stations to a more complex system that includes concurrent producer threads submitting missions to a central network, which then dispatches trains across the network to fulfill those missions. The program uses Rust's ownership model, concurrency primitives, and error handling to create a robust and realistic simulation of a railway network.
-// I AM The Fat Controller, and I approve this message: All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
+// I AM The Fat Controller, or, at least, I would be, if this were built around a centralized God Object: All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
 
 fn main() {
     let mut network = RailwayNetwork::new();
@@ -159,13 +159,6 @@ fn main() {
 
 
 
-
-
-
-
-
-
-
     println!("{YELLOW}System Online. Spawning independent customer threads...{RESET}");
 
 
@@ -215,6 +208,7 @@ fn main() {
     });
 
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
+    //thread::sleep(std::time::Duration::from_secs(6)); // This is just to ensure that the producers have time to send their missions and receive their reports before we print the final status. In a more complex simulation, we would want to implement a more robust synchronization mechanism to ensure that all threads have completed their work before we proceed, but for this simple example, a short sleep is sufficient to allow the message passing to complete before we print the final results.
     println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
         producer_1_handle.join().unwrap();
         producer_2_handle.join().unwrap();
@@ -223,98 +217,6 @@ fn main() {
 
 
 
-
-
-
-
-
-
-
-
-
-    // //Threads and Wormholes: To demonstrate the physics of Rust and Networking, we will establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different controle center (or perhaps, a customer) sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
-
-    // //Establish a simple radio communication system using Rust's mpsc channels to simulate the dispatch of missions across the network. Each thread will represent a different controle center (or perhaps, a customer) sending out mission updates, while the main thread will listen for these updates and print them out as they are received.
-    // let (tx, rx) = mpsc::channel();
-
-    // //Give a radio to a concurrent thread, Producer 1, to send out a mission update. Since tx is moved into the closure, we need to clone it for each thread that wants to send messages. This allows multiple threads to send messages through the same channel without ownership conflicts.
-    // let tx1 = tx.clone();
-    // thread::spawn(move || {
-    //     // 1. Create a personal radio just for this thread. This will send a MissionReport back to the main thread after the mission is processed so it can print the station status.
-    //     let (tx_reply, rx_reply) = mpsc::channel();
-        
-    //     // 2. put the transmitter inside the Mission payload so the network can send a report back to the main thread after processing the mission. This is a common pattern in Rust for asynchronous communication, where you include a sender in the message payload to allow the recipient to send a response back to the original sender.
-    //     let mission1: Mission = Mission { 
-    //         id: 1, 
-    //         request_id: 1001,
-    //         origin: String::from("Tidmouth"), 
-    //         destination: String::from("Brendam Docks"), 
-    //         required_cars: vec![2, 4], 
-    //         reply_channel: Some(tx_reply) 
-    //     };
-
-    //     // 3. Send the mission to the Network via the main thread's receiver. The main thread will then process the mission and send a report back to this thread through the tx_reply channel.
-    //     tx1.send(mission1).unwrap();
-    //     println!("Thread 1 sending mission 1.");
-
-    //     // 4. Block and wait for the Network's report on the mission. Once it receives the report, it can print it out or take further actions based on the success or failure of the mission.
-    //     match rx_reply.recv() {
-    //         Ok(report) => match report {
-    //             MissionReport::Success(message) => println!("{GREEN}Thread 1 received success report: {}{RESET}", message),
-    //             MissionReport::Failure(message) => println!("{RED}Thread 1 received failure report: {}{RESET}", message),
-    //         },
-    //         Err(e) => println!("{RED}Network radio went silent. (Dispatcher dropped.) Error: {}{RESET}", e),
-    //     }
-    // });
-
-    // // Cloning a radio for a second producer, Producer 2, to send out a different mission update concurrently.
-    // let tx2  = tx.clone();
-    // thread::spawn(move || {
-    //     //1. Do the same thing for Producer 2, create a personal radio and include the sender in the mission payload so the network can send a report back to the main thread after processing the mission.
-    //     let (tx_reply, rx_reply) = mpsc::channel();
-
-    //     //2. Place the "radio" (sender) inside the Mission payload so the network can send a report back to the main thread after processing the mission.
-    //     let mission2: Mission = Mission{
-    //         id:2, 
-    //         request_id: 1002,
-    //         origin: String::from("Tidmouth"),
-    //         destination: String::from("Brendam Docks"), 
-    //         required_cars: vec![6],
-    //         reply_channel: Some(tx_reply),
-    //     };
-
-    //     //3. Send the mission to the Network via the main thread's receiver.
-    //     tx2.send(mission2).unwrap();
-    //     println!("Thread 2 sending Mission 2.");
-
-    //     //4. Block and wait for the Network's report on the mission. Once it receives the report, it can print it out or take further actions based on the success or failure of the mission.
-    //     match rx_reply.recv() {
-    //         Ok(report) => match report {
-    //             MissionReport::Success(message) => println!("{GREEN}Thread 2 received success report: {}{RESET}", message),
-    //             MissionReport::Failure(message) => println!("{RED}Thread 2 received failure report: {}{RESET}", message),
-    //         },
-    //         Err(e) => println!("{RED}Network radio went silent. (Dispatcher dropped.) Error: {}{RESET}", e),
-    //     }
-    // });
-
-    // // The Network acts as a single consumer. It listens for incoming mission updates from any producer thread and processes them as they arrive.
-    // //The main thread will block on the receiver (rx) until it gets a message and listen.
-    // //Every time a mission comes through the radio from any producer thread, the main thread will process the mission by adding it to the network and dispatching a train across the network to fulfill said mission. 
-    // for received_mission in rx {
-    //     println!{"Main thread received mission updated: {:?}", received_mission};
-
-    //     let received_mission_id = received_mission.id;
-    //     network.add_mission(received_mission);//truth be told, a Mission is pretty cheap to clone, but we can also just move it into the network since we won't need to use it in the main thread after this point.
-
-    //     network.dispatch_train_across_network(received_mission_id);
-    // }
-
 }
-
-
-
-
-
-
 
 

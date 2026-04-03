@@ -130,9 +130,11 @@ pub enum TrainError {
         issues: String,
     },
     Derailment {
-        train_id: u32,
-        reason: String,
-    },
+        mission_id: u32,
+        surviving_cars: Vec<TrainCar>,
+        last_known_station: String, 
+        report_to: Option<Sender<MissionReport>>,
+    }
 }
 
 
@@ -234,17 +236,18 @@ impl Train {
     
 
     // Notice the &mut self. The train is 'taking damage' (burning fuel).
-    pub fn dispatch(&mut self, distance_to_next_stop: f64) -> Result<(), TrainError> {
+    pub fn dispatch(&mut self, distance_to_next_stop: f64) -> Result<f64, TrainError> {
         println!("Train {} is departing for ({}km)...", self.id, distance_to_next_stop);
         
         // 1. Calculate the final weight
         let total_weight = self.calculate_cargo_weight();
+        let speed = self.engine.engine_type.speed() as f64;
         
         // 2. The Consequence
         self.engine.burn_fuel(total_weight, distance_to_next_stop)?;
         
 
-        Ok(())
+        Ok(distance_to_next_stop / speed) // Return the estimated time to next stop based on speed
     }
 
 
@@ -293,6 +296,11 @@ pub enum StationCommand {
     ReceiveTrain {
         train: Train,
         reply_to: Sender<Result<(), TrainError>>,
+    },
+    HandleEmergencySOS { 
+        mission_id: u32, 
+        surviving_cars: Vec<TrainCar>, 
+        report_to: Option<Sender<MissionReport>> 
     },
     IntakeCar {
         train_car: TrainCar,
