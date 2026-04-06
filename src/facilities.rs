@@ -678,6 +678,7 @@ impl StationState {
             //     ));
             //     let _ = sender.send(report);
             // }
+            
         } else {
             let final_destination = &train.destination;
             let current_location = &self.name;
@@ -691,7 +692,21 @@ impl StationState {
                 },
                 None => {
                     println!("{RED}Network Error: No track laid between {} and {}. Cannot forward train.{RESET}", self.name, final_destination);
-                    
+                    // --- THE VOID PATCH: Salvage Operation ---
+                    self.roundhouse.house(train.engine);
+                    for car in train.cars {
+                        let car_id = car.id;
+                        match self.yard.receive_car(car) {
+                            Ok(Some(cargo)) => { self.warehouse.store(cargo); },
+                            Ok(None) => {}, // Car is empty but safely in the yard
+                            Err((homeless_car, e)) => {
+                                println!("{RED}Train {}: Failed to process Car {} during salvage: {:?}. Moving to purgatory.{RESET}", train.id, car_id, e);
+                                let rejected_asset = RejectedAsset::new(homeless_car, e, train.mission_id);
+                                self.yard.purgatory.push(rejected_asset);
+                            }
+                        }
+                    }
+                    // ----------------------------------------
                     let error = TrainError::MissionImpossible { reason: "Destination unreachable".to_string() };
                     if reply_to.send(Err(error)).is_err() {
                         println!("{RED}[{}] DEAD-LETTER: Failed to send transit failure for Train {} due to unreachable destination.{RESET}", self.name, train.id);
