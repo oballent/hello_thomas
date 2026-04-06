@@ -3,7 +3,6 @@ use crate::network::RailwayNetwork;
 use std::collections::{HashMap, VecDeque};
 use rand::Rng;
 
-use std::f32::consts::E;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
@@ -16,6 +15,22 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 pub struct Railyard {
@@ -105,7 +120,7 @@ impl Railyard {
     }
 
 
-    pub fn receive_car(&mut self, mut car: TrainCar) -> Result<(), (TrainCar, Vec<TrainError>)> {
+    pub fn receive_car(&mut self, mut car: TrainCar) -> Result<Option<Cargo>, (TrainCar, Vec<TrainError>)> {
 
         let mut issues = Vec::<TrainError>::new();
 
@@ -130,8 +145,9 @@ impl Railyard {
         if issues.is_empty() {
             // 3. Success: The state change is clear
             println!("{GREEN}Railyard: Car {} safely docked in locker.{RESET}", car.id);
+            let cargo = car.cargo.take(); // We want to pass the cargo up to the warehouse, but we also want to keep the car in the yard's inventory. By using .take(), we move the cargo out of the car and replace it with None, which allows us to return the cargo to the caller while still keeping the car in our HashMap for future reference.
             self.cars.insert(car.id, car);
-            Ok(())
+            Ok(cargo)
         }
         else {
             // 4. Failure: We return the car and the ledger of issues for transparency and debugging.
@@ -354,6 +370,455 @@ impl Warehouse {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+pub struct StationState {
+    pub name: String,
+    pub yard: Railyard,
+    pub roundhouse: Roundhouse,
+    pub warehouse: Warehouse,
+    pub map: Arc<RailwayNetwork>,
+    pub tx: Sender<StationCommand>, // The Boomerang
+}
+
+
+impl StationState {
+    pub fn new(name: String, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
+        StationState {
+            name,
+            yard: Railyard::new(),
+            roundhouse: Roundhouse::new(),
+            warehouse: Warehouse::new(),
+            map,
+            tx,
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    // The VIP Pass is `&mut self`. This allows the method to open its own briefcase!
+    pub fn handle_assemble_mission(
+        &mut self, 
+        mission: Mission, 
+        //distance: f64, 
+        //route: Vec<String>, 
+        //destination: String, 
+        reply_to: Sender<Result<Train, TrainError>>
+    ) {
+        println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", self.name, mission.id);
+        
+        // 1. Paste your assemble_train logic here!
+        // First, we need to use our map! Choo choo!
+
+
+
+        let (distance, route) = match self.map.find_shortest_path(&self.name, &mission.destination) {
+            Some((d, r)) => {
+                println!(
+                    "{YELLOW}Network: Shortest path for Mission {} is {} km via {:?}.{RESET}",
+                    mission.id, d, r
+                );
+                (d, r)
+            },
+            None => {
+                println!("{RED}Network Error: No track laid between {} and {}.{RESET}", self.name, mission.destination);
+                let error = TrainError::MissionImpossible { reason: "Destination unreachable".to_string() };
+                if reply_to.send(Err(error)).is_err() {
+                    println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
+                }
+                return;
+            }
+        };
+
+        // At this point, we have the distance and route calculated, so we can proceed with the assembly logic using these values.
+
+        // Now for the fun part: we're going to completely rewrite assemble_train as part of the Station's responsibilities, because the Station is now the mastermind behind the whole operation, and it needs to have access to its internal state (the yard and roundhouse) to pull this off. The network is just a map and dispatcher, so it makes more sense for the Station to handle the assembly logic directly.
+        
+        let total_weight = match self.yard.get_total_cargo_weight(&mission) {
+            Ok(weight) => weight,
+            Err(e) => {
+                println!("{RED}Yard Error: Failed to calculate total cargo weight for Mission {}: {:?}.{RESET}", mission.id, e);
+                // if reply_to.send(Err(e)).is_err() {
+                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to cargo weight calculation error.{RESET}", self.name, mission.id);
+                // }
+                self.send_mission_failure(mission.id, e, reply_to);
+                return;
+            }
+        };
+
+
+        let engine = match self.roundhouse.find_suitable_engine(total_weight, distance) {
+            Ok(engine) => engine,
+            Err(e) => {
+                println!("{RED}Roundhouse Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", mission.id, e);
+                // if reply_to.send(Err(e)).is_err() {
+                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to engine availability error.{RESET}", self.name, mission.id);
+                // }
+                self.send_mission_failure(mission.id, e, reply_to);
+                return;
+            }
+        };
+
+
+        let attached_cars = match self.yard.assemble_cars(&mission) {
+            Ok(cars) => cars,
+            Err(e) => {
+                println!("{RED}Yard Error: Failed to assemble cars for Mission {}: {:?}.{RESET}", mission.id, e);
+                // Since we already took the engine out of the roundhouse, we need to return it back to avoid losing it due to a failed assembly!
+                self.roundhouse.house(engine);
+                // if reply_to.send(Err(e)).is_err() {
+                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to car assembly error.{RESET}", self.name, mission.id);
+                // }
+                self.send_mission_failure(mission.id, e, reply_to);
+                return;
+            }
+        };
+
+
+
+        let mut train = Train {
+            id: self.yard.generate_new_id(),
+            engine,
+            cars: attached_cars,
+            mission_id: Some(mission.id),
+            destination: mission.destination.clone(),
+            report_to: mission.reply_channel.clone(),
+        };
+
+        
+        // 2. Paste your Dijkstra routing and thread::spawn transit logic here! NO! Okay, maybe the thread::spawn part can stay
+
+        let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
+        let next_stop_handle = self.map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+        let distance_to_next_stop = self.map.get_distance(&self.name, &next_stop).expect("Distance to next stop must be calculable");
+        let (transit_tx, transit_rx) = mpsc::channel();
+
+        let train_id = train.id; // Store the train ID for logging inside the thread
+        let station_name_clone = self.name.clone(); // Clone the station name for use in this thread
+        let my_station_handle = self.tx.clone(); // Clone the station's own Sender for use in the thread, so we can send SOS if needed
+
+        // Remember to use `self.map` to find the shortest path, and `self.tx.clone()` for the SOS radio
+
+        thread::spawn(move || {
+            let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
+            println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+            thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+
+            // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
+            let tree_falls = rand::thread_rng().gen_bool(0.1);
+            if tree_falls {
+                println!("{RED}🚨 DERAILMENT!{RESET}");
+
+                // We send an SOS command BACK to the Station's main mailbox!
+                // (You will need to pass a clone of the Station's own Sender into the thread)
+                my_station_handle.send(StationCommand::HandleEmergencySOS {
+                    mission_id: train.mission_id.unwrap_or(0),
+                    surviving_cars: train.cars, // The train dies, but the cars live!
+                    report_to: train.report_to,
+                }).expect("SOS failed");
+
+                return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
+            } else {
+                println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
+                next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+            }
+
+            match transit_rx.recv() {
+                Ok(_) => {
+                    println!("{BOLD}{CYAN}[{}] CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
+                    // Here we would handle the result of the transit, such as sending a MissionReport back to the mission's reply channel based on success or failure at the next station.
+                },
+                Err(e) => {
+                    println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                }
+            }
+        });
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
+        println!("{GREEN}[{}] Processing arrival of Train {}.{RESET}", self.name, train.id);
+        let final_destination = &train.destination;
+        let current_location = &self.name;
+        let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
+
+        if current_location == final_destination {
+            println!("{GREEN}[{}] Train {} has reached its final destination! Unloading...{RESET}", self.name, train.id);
+            //crack the egg
+            let (engine, cars, id, mission_id, report_to) = (train.engine,train.cars, train.id, train.mission_id, train.report_to); // Destructure the "Gestalt"
+            let num_cars = cars.len();
+            let mut issues_clone = Vec::new(); // We can fill this with any issues that arise during disassembly, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect disassembly.
+            // 1. Return the Power
+            self.roundhouse.house(engine);
+            // 2. Return the Cars
+            for car in cars {
+                // Step A: The Security Gate & Intake
+                // This handles contraband and duplicate ID checks.
+                let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
+                match self.yard.receive_car(car) {
+                    Ok(Some(cargo)) => {
+                        // Step B: Fulfillment
+                        // Now that the car is safely in the yard's HashMap, 
+                        // we can reach in and "deliver" the goods to the warehouse.
+                        self.warehouse.store(cargo);
+                    }
+                    Ok(None) => {
+                        println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", id, car_id_we_just_received);
+                    }
+                    Err((homeless_car, e)) => {
+                        println!("{RED}Train {}: Failed to process Car {} during disassembly: {:?}. Moving to purgatory.{RESET}", id, car_id_we_just_received, e);
+                        // Note: If train.mission_id is already an Option, you might just be able to pass it directly 
+                        // without wrapping it in Some() and unwrap_or(0), depending on your RejectedAsset signature!
+                        issues_clone.push(homeless_car.id); // Log the ID of the car that caused issues for transparency
+                        let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id); //we do not need to unwrap_or(0) here because mission_id is already an Option in the Train struct, so we can pass it directly
+                        self.yard.purgatory.push(rejected_asset);
+                    }
+                }
+            }
+            let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can peacefully die.
+            if issues_clone.is_empty() {
+                if let Some(sender) = report_to {
+                    let report = MissionReport::Success(format!(
+                        "Train {} successfully completed Mission {} by delivering {} cars to {}.",
+                        id, mission_id.unwrap_or(0), num_cars, self.name
+                    ));
+                    let _ = sender.send(report);
+                }
+            } else {
+                if let Some(sender) = report_to {
+                    let report = MissionReport::PartialSuccess(format!(
+                        "Train {} completed Mission {} by delivering {} cars to {}, but {} cars had issues during disassembly.",
+                        id, mission_id.unwrap_or(0), num_cars - issues_clone.len(), self.name, issues_clone.len()
+                    ));
+                    let _ = sender.send(report);
+                }
+            }
+            // if let Some(sender) = report_to {
+            //     let report = MissionReport::Success(format!(
+            //         "Train {} successfully completed Mission {} by delivering {} cars to {}.",
+            //         id, mission_id, cars.len(), self.name
+            //     ));
+            //     let _ = sender.send(report);
+            // }
+        } else {
+            let final_destination = &train.destination;
+            let current_location = &self.name;
+            let (distance, route) = match self.map.find_shortest_path(current_location, final_destination) {
+                Some((d, r)) => {
+                    println!(
+                        "{YELLOW}Network: Shortest path for Train {} to final destination {} is {} km via {:?}.{RESET}",
+                        train.id, final_destination, d, r
+                    );
+                    (d, r)
+                },
+                None => {
+                    println!("{RED}Network Error: No track laid between {} and {}. Cannot forward train.{RESET}", self.name, final_destination);
+                    
+                    let error = TrainError::MissionImpossible { reason: "Destination unreachable".to_string() };
+                    if reply_to.send(Err(error)).is_err() {
+                        println!("{RED}[{}] DEAD-LETTER: Failed to send transit failure for Train {} due to unreachable destination.{RESET}", self.name, train.id);
+                    }
+                    if let Some(sender) = train.report_to {
+                        let report = MissionReport::Failure(format!(
+                            "Train {} failed to reach final destination {} because it is unreachable from {}.",
+                            train.id, final_destination, self.name
+                        ));
+                        let _ = sender.send(report);
+                    }
+                    return;
+                }
+            };
+
+            let next_stop = route.get(1).cloned().unwrap_or_else(|| final_destination.clone()); // The next stop is the second element in the route (index 1), or the final destination if the route is just one stop
+            let next_stop_handle = self.map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+            let distance_to_next_stop = self.map.get_distance(&self.name, &next_stop).expect("Distance to next stop must be calculable");
+
+            let train_id = train.id; // Store the train ID for logging inside the thread
+            let station_name_clone = self.name.clone(); // Clone the station name for use in this thread
+            let (transit_tx, transit_rx) = mpsc::channel();
+
+            thread::spawn(move || {
+                let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
+                println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+                thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+
+                // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
+                let tree_falls = rand::thread_rng().gen_bool(0.1);
+                if tree_falls {
+                    println!("{RED}🚨 DERAILMENT!{RESET}");
+
+                    // We send an SOS command BACK to the Station's main mailbox!
+                    // (You will need to pass a clone of the Station's own Sender into the thread)
+                    station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                        mission_id: train.mission_id.unwrap_or(0),
+                        surviving_cars: train.cars, // The train dies, but the cars live!
+                        report_to: train.report_to,
+                    }).expect("SOS failed");
+
+                    return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
+                } else {
+                    println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
+                    next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+                }
+
+                match transit_rx.recv() {
+                    Ok(_) => {
+                        println!("{BOLD}{CYAN}[{}] CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
+                        // Here we would handle the result of the transit, such as sending a MissionReport back to the mission's reply channel based on success or failure at the next station.
+                    },
+                    Err(e) => {
+                        println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                    }
+
+                }
+            });                      
+        }
+
+
+
+
+        // 1. Put the engine back in the roundhouse.
+        // 2. Put the cars back in the yard.
+        // 3. (Optional) Check if the train arrived at its final destination. If so, mail a success report!
+        // 4. Send an Ok(()) back to the transit thread so it can peacefully die.
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    fn send_mission_failure(&self, mission_id: u32, error: TrainError, reply_to: Sender<Result<Train, TrainError>>) {
+        if reply_to.send(Err(error)).is_err() {
+            println!("{RED}Network Error: Failed to send mission failure report for Mission {}.{RESET}", mission_id);
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 // This is JUST data. No threads, no channels, no logic.
     pub struct StationMetadata {
         pub name: String,
@@ -397,9 +862,9 @@ fn assemble_train(
         id: yard.generate_new_id(),
         engine,
         cars: attached_cars,
-        distance_km: distance,
+        //distance_km: distance,
         mission_id: Some(mission.id),
-        route_to_destination: route, // This will be filled in by the network when the train is dispatched
+        //route_to_destination: route, // This will be filled in by the network when the train is dispatched
         destination: destination, // This will also be filled in by the network
         report_to: mission.reply_channel.clone(), // The train can use this channel to send updates back to the mission
     })

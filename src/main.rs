@@ -21,6 +21,7 @@ const BOLD: &str = "\x1b[1m";
 // I AM The Fat Controller, or, at least, I would be, if this were built around a centralized God Object: All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
 
 fn main() {
+
     let mut network = RailwayNetwork::new();
 
 

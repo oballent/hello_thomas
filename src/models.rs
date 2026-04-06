@@ -216,10 +216,10 @@ pub struct Train{
     pub id: u32,
     pub cars: Vec<TrainCar>,
     pub engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
-    pub distance_km: f64, // We can add more fields here as needed, like destination, mission details, etc.
+    //pub distance_km: f64, // We can add more fields here as needed, like destination, mission details, etc.
     pub mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
     // Now, for actor-based, decentralized travel across shortest route to destination
-    pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
+    //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
     pub destination: String, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
     pub report_to: Option<Sender<MissionReport>>
 }
@@ -280,6 +280,7 @@ pub struct Mission {
 #[derive(Debug)]
 pub enum MissionReport {
     Success(String),
+    PartialSuccess(String),
     Failure(String),
 }
 
