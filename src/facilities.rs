@@ -678,7 +678,7 @@ impl StationState {
             //     ));
             //     let _ = sender.send(report);
             // }
-            
+
         } else {
             let final_destination = &train.destination;
             let current_location = &self.name;
@@ -780,11 +780,53 @@ impl StationState {
 
 
 
+    pub fn handle_emergency_sos(&mut self, mission_id: u32, surviving_cars: Vec<TrainCar>, report_to: Option<Sender<MissionReport>>) {
+        println!("{RED}[{}] 🚨 EMERGENCY: Processing SOS for Mission {}.{RESET}", self.name, mission_id);
+        
+        let mut stranded_issues = Vec::new();
+
+        // Process the survivors back into the yard
+        for car in surviving_cars {
+            let car_id = car.id;
+            match self.yard.receive_car(car) {
+                Ok(Some(cargo)) => { self.warehouse.store(cargo); },
+                Ok(None) => {}, // Empty, but safe
+                Err((homeless_car, e)) => {
+                    stranded_issues.push(homeless_car.id);
+                    let rejected_asset = RejectedAsset::new(homeless_car, e, Some(mission_id));
+                    self.yard.purgatory.push(rejected_asset);
+                }
+            }
+        }
+
+        // Send the Failure Report
+        if let Some(channel) = report_to {
+            let report_msg = if stranded_issues.is_empty() {
+                format!("Mission {} derailed. Engine lost, but all surviving cars were successfully salvaged at {}.", mission_id, self.name)
+            } else {
+                format!("Mission {} derailed. Engine lost. {} cars failed intake and sit in purgatory at {}.", mission_id, stranded_issues.len(), self.name)
+            };
+
+            let _ = channel.send(MissionReport::Failure(report_msg));
+        }
+    }
 
 
 
-
-
+    fn handle_intake_cars(&mut self, cars: Vec<TrainCar>) {
+        for car in cars {
+            let car_id = car.id;
+            match self.yard.receive_car(car) {
+                Ok(Some(cargo)) => { self.warehouse.store(cargo); },
+                Ok(None) => {}, // Car is empty but safely in the yard
+                Err((homeless_car, e)) => {
+                    println!("{RED}Failed to process Car {} during emergency intake: {:?}. Moving to purgatory.{RESET}", car_id, e);
+                    let rejected_asset = RejectedAsset::new(homeless_car, e, None); // We don't have a mission ID in this context, so we can pass None
+                    self.yard.purgatory.push(rejected_asset);
+                }
+            }
+        }
+    }
 
 
 
@@ -917,6 +959,7 @@ impl Station {
         let station_name = String::from(name);
         let tx = map.get_station_handle(&station_name).expect("Station handle must exist").clone();
 
+        let mut state = StationState::new(station_name.clone(), map.clone(), tx.clone());
         // Spawn a thread to run the station's internal loop
         thread::spawn(move || {
             // The station's internal state
@@ -926,209 +969,211 @@ impl Station {
             for command in rx {
                 match command {
                     StationCommand::AssembleMission { mission, distance, route, destination, reply_to } => {
-                        println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
-                        match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance, route, destination) {
-                            Ok(mut train) => {
-                                if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
-                                    let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
-                                    let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
-                                    let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
-                                    let (transit_tx, transit_rx) = mpsc::channel();
-                                    println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id, route.join(" -> "));
+                        state.handle_assemble_mission(mission, reply_to);
+                        // println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", station_name, mission.id);
+                        // match assemble_train(&station_name, &mut yard, &mut roundhouse, &mission, distance, route, destination) {
+                        //     Ok(mut train) => {
+                        //         if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
+                        //             let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
+                        //             let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+                        //             let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
+                        //             let (transit_tx, transit_rx) = mpsc::channel();
+                        //             println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id, route.join(" -> "));
 
                                     
-                                    let train_id = train.id; // Store the train ID for logging inside the thread
+                        //             let train_id = train.id; // Store the train ID for logging inside the thread
                                     
 
 
-                                    let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
-                                    let my_station_handle = tx.clone(); // Clone the station's own Sender for use in the thread, so we can send SOS if needed
-                                    // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
-                                    thread::spawn(move || {
-                                        let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
-                                        println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
-                                        thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+                        //             let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
+                        //             let my_station_handle = tx.clone(); // Clone the station's own Sender for use in the thread, so we can send SOS if needed
+                        //             // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
+                        //             thread::spawn(move || {
+                        //                 let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
+                        //                 println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+                        //                 thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
 
 
 
 
-                                        // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
-                                        let tree_falls = rand::thread_rng().gen_bool(0.1);
-                                        if tree_falls {
-                                            println!("{RED}🚨 DERAILMENT!{RESET}");
+                        //                 // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
+                        //                 let tree_falls = rand::thread_rng().gen_bool(0.1);
+                        //                 if tree_falls {
+                        //                     println!("{RED}🚨 DERAILMENT!{RESET}");
     
-                                            // We send an SOS command BACK to the Station's main mailbox!
-                                            // (You will need to pass a clone of the Station's own Sender into the thread)
-                                            my_station_handle.send(StationCommand::HandleEmergencySOS {
-                                                mission_id: train.mission_id.unwrap_or(0),
-                                                surviving_cars: train.cars, // The train dies, but the cars live!
-                                                report_to: train.report_to,
-                                            }).expect("SOS failed");
+                        //                     // We send an SOS command BACK to the Station's main mailbox!
+                        //                     // (You will need to pass a clone of the Station's own Sender into the thread)
+                        //                     my_station_handle.send(StationCommand::HandleEmergencySOS {
+                        //                         mission_id: train.mission_id.unwrap_or(0),
+                        //                         surviving_cars: train.cars, // The train dies, but the cars live!
+                        //                         report_to: train.report_to,
+                        //                     }).expect("SOS failed");
 
-                                            return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
-                                        } else {
-                                            println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
+                        //                     return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
+                        //                 } else {
+                        //                     println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
                                             
-                                        next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
-                                        }
+                        //                 next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+                        //                 }
 
 
 
 
 
 
-                                        match transit_rx.recv() {
-                                            Ok(result) => {
-                                                println!("{BOLD}{CYAN}[{}] CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
-                                                // match result {
-                                                //     Ok(_) => {
-                                                //         println!("{GREEN}[{}] Train {} successfully processed at {}. Transit complete!{RESET}", station_name_clone, train_id, next_stop);
-                                                //         let mission_report = MissionReport::Success(format!("Train {} successfully arrived at {}.", train_id, next_stop));
-                                                //         if let Some(sender) = train.report_to {
-                                                //             sender.send(mission_report).unwrap_or_else(|e| println!("{RED}[{}] Failed to send success report for Train {} after transit: {:?}{RESET}", station_name_clone, train_id, e));
-                                                //         }
-                                                //     },
-                                                //     Err(e) => {
-                                                //         println!("{RED}[{}] ERROR processing Train {} at {}: {:?}{RESET}", station_name_clone, train_id, next_stop, e);
-                                                //         let mission_report = MissionReport::Failure(format!("Train {} failed to arrive at {}: {:?}", train_id, next_stop, e));
-                                                //         if let Some(sender) = train.report_to {
-                                                //             sender.send(mission_report).unwrap_or_else(|e| println!("{RED}[{}] Failed to send failure report for Train {} after transit: {:?}{RESET}", station_name_clone, train_id, e));
-                                                //         }
-                                                //     }
-                                                // }
+                        //                 match transit_rx.recv() {
+                        //                     Ok(result) => {
+                        //                         println!("{BOLD}{CYAN}[{}] CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
+                        //                         // match result {
+                        //                         //     Ok(_) => {
+                        //                         //         println!("{GREEN}[{}] Train {} successfully processed at {}. Transit complete!{RESET}", station_name_clone, train_id, next_stop);
+                        //                         //         let mission_report = MissionReport::Success(format!("Train {} successfully arrived at {}.", train_id, next_stop));
+                        //                         //         if let Some(sender) = train.report_to {
+                        //                         //             sender.send(mission_report).unwrap_or_else(|e| println!("{RED}[{}] Failed to send success report for Train {} after transit: {:?}{RESET}", station_name_clone, train_id, e));
+                        //                         //         }
+                        //                         //     },
+                        //                         //     Err(e) => {
+                        //                         //         println!("{RED}[{}] ERROR processing Train {} at {}: {:?}{RESET}", station_name_clone, train_id, next_stop, e);
+                        //                         //         let mission_report = MissionReport::Failure(format!("Train {} failed to arrive at {}: {:?}", train_id, next_stop, e));
+                        //                         //         if let Some(sender) = train.report_to {
+                        //                         //             sender.send(mission_report).unwrap_or_else(|e| println!("{RED}[{}] Failed to send failure report for Train {} after transit: {:?}{RESET}", station_name_clone, train_id, e));
+                        //                         //         }
+                        //                         //     }
+                        //                         // }
 
-                                            },
-                                            Err(e) => {
-                                                println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
-                                            }
-                                        }
-                                    });
+                        //                     },
+                        //                     Err(e) => {
+                        //                         println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                        //                     }
+                        //                 }
+                        //             });
                                     
-                                }
+                        //         }
 
-                            },
-                            Err(e) => {
-                                println!("{RED}[{}] Assembly failed for mission {}: {:?}{RESET}", station_name, mission.id, e);
-                                // We attempt to send the failure back to the network so it can handle it (like returning the engine if it was dispatched)
-                                if let Err(send_error) = reply_to.send(Err(e)) {
-                                    println!(
-                                        "{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {}. Error: {:?}{RESET}",
-                                        station_name, mission.id, send_error
-                                    );
-                                } else {
-                                    println!("{YELLOW}[{}] Successfully sent assembly failure for mission {} back to network.{RESET}", station_name, mission.id);
-                                }
-                            }
-                        }
+                        //     },
+                        //     Err(e) => {
+                        //         println!("{RED}[{}] Assembly failed for mission {}: {:?}{RESET}", station_name, mission.id, e);
+                        //         // We attempt to send the failure back to the network so it can handle it (like returning the engine if it was dispatched)
+                        //         if let Err(send_error) = reply_to.send(Err(e)) {
+                        //             println!(
+                        //                 "{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {}. Error: {:?}{RESET}",
+                        //                 station_name, mission.id, send_error
+                        //             );
+                        //         } else {
+                        //             println!("{YELLOW}[{}] Successfully sent assembly failure for mission {} back to network.{RESET}", station_name, mission.id);
+                        //         }
+                        //     }
+                        // }
                     },
                     StationCommand::ReceiveTrain {mut train, reply_to } => {
 
 
-                        if station_name == train.destination {
-                            println!("{BOLD}{GREEN}[{}] Train {} has arrived at its destination! No route needed.{RESET}", station_name, train.id);
+                        state.handle_receive_train(train, reply_to);
+                        // if station_name == train.destination {
+                        //     println!("{BOLD}{GREEN}[{}] Train {} has arrived at its destination! No route needed.{RESET}", station_name, train.id);
                             
-                            // let result = receive_train_internal(
-                            //     &station_name,
-                            //     &mut yard,
-                            //     &mut roundhouse,
-                            //     &mut warehouse,
-                            //     train,
-                            // );
-                            // if reply_to.send(result).is_err() {
-                            //     println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
-                            // }
-                            let train_id = train.id; // Store the train ID for logging
-                            let report_to = train.report_to.clone(); // Clone the report_to sender for use in this thread, so we can send a MissionReport if needed
-                            match receive_train_internal(
-                                &station_name,
-                                &mut yard,
-                                &mut roundhouse,
-                                &mut warehouse,
-                                train,
-                            ) {
-                                Ok(_) => {
-                                    let mission_report = MissionReport::Success(format!("Train {} successfully processed at destination {}.", train_id, station_name));
-                                 //   if reply_to.send(Ok(mission_report)).is_err() {
-                                    match reply_to.send(Ok(())) {
-                                        Ok(_) => println!("{YELLOW}[{}] Successfully sent arrival confirmation for Train {} back to network.{RESET}", station_name, train_id),
-                                        Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send success confirmation for Train {} at destination: {:?}{RESET}", station_name, train_id, e),
-                                    }
-                                    // if reply_to.send(Ok(())) .is_err() {
-                                    //     println!("{RED}[{}] DEAD-LETTER: Failed to send success confirmation for Train {} at destination.{RESET}", station_name, train_id);
-                                    // } else {
-                                    //     println!("{YELLOW}[{}] Successfully sent arrival confirmation for Train {} back to network.{RESET}", station_name, train_id);
-                                    // }
-                                    println!("{GREEN}[{}] Train successfully processed at destination.{RESET}", station_name);
-                                }
-                                Err(e) => {
-                                    println!("{RED}[{}] ERROR processing train at destination: {:?}{RESET}", station_name, e);
-                                    let mission_report = MissionReport::Failure(format!("Failed to process Train {} at destination {}: {:?}", train_id, station_name, e));
-                                    if reply_to.send(Err(e)).is_err() {
-                                        println!("{RED}[{}] DEAD-LETTER: Failed to send failure report for Train {} at destination.{RESET}", station_name, train_id);
-                                    } else {
-                                        println!("{YELLOW}[{}] Successfully sent failure report for Train {} back to network.{RESET}", station_name, train_id);
-                                    }
-                                }
-                            }
+                        //     // let result = receive_train_internal(
+                        //     //     &station_name,
+                        //     //     &mut yard,
+                        //     //     &mut roundhouse,
+                        //     //     &mut warehouse,
+                        //     //     train,
+                        //     // );
+                        //     // if reply_to.send(result).is_err() {
+                        //     //     println!("{RED}[{}] DEAD-LETTER: receive-train reply dropped.{RESET}", station_name);
+                        //     // }
+                        //     let train_id = train.id; // Store the train ID for logging
+                        //     let report_to = train.report_to.clone(); // Clone the report_to sender for use in this thread, so we can send a MissionReport if needed
+                        //     match receive_train_internal(
+                        //         &station_name,
+                        //         &mut yard,
+                        //         &mut roundhouse,
+                        //         &mut warehouse,
+                        //         train,
+                        //     ) {
+                        //         Ok(_) => {
+                        //             let mission_report = MissionReport::Success(format!("Train {} successfully processed at destination {}.", train_id, station_name));
+                        //          //   if reply_to.send(Ok(mission_report)).is_err() {
+                        //             match reply_to.send(Ok(())) {
+                        //                 Ok(_) => println!("{YELLOW}[{}] Successfully sent arrival confirmation for Train {} back to network.{RESET}", station_name, train_id),
+                        //                 Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send success confirmation for Train {} at destination: {:?}{RESET}", station_name, train_id, e),
+                        //             }
+                        //             // if reply_to.send(Ok(())) .is_err() {
+                        //             //     println!("{RED}[{}] DEAD-LETTER: Failed to send success confirmation for Train {} at destination.{RESET}", station_name, train_id);
+                        //             // } else {
+                        //             //     println!("{YELLOW}[{}] Successfully sent arrival confirmation for Train {} back to network.{RESET}", station_name, train_id);
+                        //             // }
+                        //             println!("{GREEN}[{}] Train successfully processed at destination.{RESET}", station_name);
+                        //         }
+                        //         Err(e) => {
+                        //             println!("{RED}[{}] ERROR processing train at destination: {:?}{RESET}", station_name, e);
+                        //             let mission_report = MissionReport::Failure(format!("Failed to process Train {} at destination {}: {:?}", train_id, station_name, e));
+                        //             if reply_to.send(Err(e)).is_err() {
+                        //                 println!("{RED}[{}] DEAD-LETTER: Failed to send failure report for Train {} at destination.{RESET}", station_name, train_id);
+                        //             } else {
+                        //                 println!("{YELLOW}[{}] Successfully sent failure report for Train {} back to network.{RESET}", station_name, train_id);
+                        //             }
+                        //         }
+                        //     }
                             
-                            println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
-                            yard.print_report(&roundhouse);
-                            println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
-                            for cargo in &warehouse.inventory {
-                                println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
-                            }
+                        //     println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        //     yard.print_report(&roundhouse);
+                        //     println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", warehouse.inventory.len());
+                        //     for cargo in &warehouse.inventory {
+                        //         println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
+                        //     }
 
 
-                            report_to.as_ref().map(|sender| {
-                                sender.send(MissionReport::Success(format!("Train {} has arrived at station {}.", train_id, station_name)))
-                                    .unwrap_or_else(|e| println!("{RED}[{}] Failed to send arrival report for Train {}: {:?}{RESET}", station_name, train_id, e));
-                            });
+                        //     report_to.as_ref().map(|sender| {
+                        //         sender.send(MissionReport::Success(format!("Train {} has arrived at station {}.", train_id, station_name)))
+                        //             .unwrap_or_else(|e| println!("{RED}[{}] Failed to send arrival report for Train {}: {:?}{RESET}", station_name, train_id, e));
+                        //     });
                       
-                        } else {
+                        // } else {
                             
-                            if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
-                                let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
-                                let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
-                                let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
-                                let (transit_tx, transit_rx) = mpsc::channel();
-                                println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id,  route.join(" -> "));
+                        //     if let Some((distance, route)) = map.find_shortest_path(&station_name, &train.destination) {
+                        //         let next_stop = route.get(1).cloned().unwrap_or_else(|| train.destination.clone()); // The next stop is the second element in the route (index 1), or the destination if the route is just one stop
+                        //         let next_stop_handle = map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
+                        //         let distance_to_next_stop = map.get_distance(&station_name, &next_stop).expect("Distance to next stop must be calculable");
+                        //         let (transit_tx, transit_rx) = mpsc::channel();
+                        //         println!("{BOLD}{GREEN}[{}] Route calculated for Train {}: {}{RESET}", station_name, train.id,  route.join(" -> "));
                                 
                                 
                                     
-                                let train_id = train.id; // Store the train ID for logging inside the thread
-                                let my_station_handle = tx.clone(); // Clone the station's own Sender for use in the thread, so we can send SOS if needed
+                        //         let train_id = train.id; // Store the train ID for logging inside the thread
+                        //         let my_station_handle = tx.clone(); // Clone the station's own Sender for use in the thread, so we can send SOS if needed
 
-                                match reply_to.send(Ok(())) {
-                                    Ok(_) => println!("{YELLOW}[{}] Successfully sent receive confirmation for Train {} back to network.{RESET}", station_name, train_id),
-                                    Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send receive confirmation for Train {}: {:?}{RESET}", station_name, train_id, e),
-                                }
+                        //         match reply_to.send(Ok(())) {
+                        //             Ok(_) => println!("{YELLOW}[{}] Successfully sent receive confirmation for Train {} back to network.{RESET}", station_name, train_id),
+                        //             Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send receive confirmation for Train {}: {:?}{RESET}", station_name, train_id, e),
+                        //         }
 
-                                let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
-                                // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
-                                thread::spawn(move || {
-                                    train.dispatch(distance_to_next_stop).expect("Failed to dispatch train");// This simulates the train traveling to the next station. In a real implementation, you would have more complex logic here to handle the train's movement and interactions with the network.
-                                    let speed = train.engine.engine_type.speed();
-                                    let time = distance_to_next_stop / (speed as f64); // simulates miles per second
-                                    println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
-                                    thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+                        //         let station_name_clone = station_name.clone(); // Clone the station name for use in this thread
+                        //         // This thread will wait for the train to arrive at the next station and then send a command to that station to receive the train
+                        //         thread::spawn(move || {
+                        //             train.dispatch(distance_to_next_stop).expect("Failed to dispatch train");// This simulates the train traveling to the next station. In a real implementation, you would have more complex logic here to handle the train's movement and interactions with the network.
+                        //             let speed = train.engine.engine_type.speed();
+                        //             let time = distance_to_next_stop / (speed as f64); // simulates miles per second
+                        //             println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+                        //             thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
                                     
                                     
-                                    // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
-                                    let tree_falls = rand::thread_rng().gen_bool(0.1);
-                                    if tree_falls {
-                                        println!("{RED}🚨 DERAILMENT!{RESET}");
+                        //             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
+                        //             let tree_falls = rand::thread_rng().gen_bool(0.1);
+                        //             if tree_falls {
+                        //                 println!("{RED}🚨 DERAILMENT!{RESET}");
 
-                                        // We send an SOS command BACK to the Station's main mailbox!
-                                        // (You will need to pass a clone of the Station's own Sender into the thread)
-                                        my_station_handle.send(StationCommand::HandleEmergencySOS {
-                                            mission_id: train.mission_id.unwrap_or(0),
-                                            surviving_cars: train.cars, // The train dies, but the cars live!
-                                            report_to: train.report_to,
-                                        }).expect("SOS failed");
+                        //                 // We send an SOS command BACK to the Station's main mailbox!
+                        //                 // (You will need to pass a clone of the Station's own Sender into the thread)
+                        //                 my_station_handle.send(StationCommand::HandleEmergencySOS {
+                        //                     mission_id: train.mission_id.unwrap_or(0),
+                        //                     surviving_cars: train.cars, // The train dies, but the cars live!
+                        //                     report_to: train.report_to,
+                        //                 }).expect("SOS failed");
 
-                                        return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
-                                    } else {
-                                        println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
+                        //                 return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
+                        //             } else {
+                        //                 println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
                                         
                                         
                                         
@@ -1139,68 +1184,70 @@ impl Station {
 
 
 
-                                    next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
-                                    }
+                        //             next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
+                        //             }
 
 
-                                    match transit_rx.recv() {
-                                        Ok(result) => {
-                                            println!("{BOLD}{CYAN}[{}] OOOOOOOOH YEAH! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
-                                            // Handle the result of the train being received at the next station if necessary
-                                        },
-                                        Err(e) => {
-                                            println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
-                                        }
-                                    }
+                        //             match transit_rx.recv() {
+                        //                 Ok(result) => {
+                        //                     println!("{BOLD}{CYAN}[{}] OOOOOOOOH YEAH! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
+                        //                     // Handle the result of the train being received at the next station if necessary
+                        //                 },
+                        //                 Err(e) => {
+                        //                     println!("{RED}[{}] ERROR receiving transit confirmation for Train {}: {:?}{RESET}", station_name_clone, train_id, e);
+                        //                 }
+                        //             }
                             
-                                    // next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
-                                });
-                            } else {
-                                // THE END OF THE LINE: Emergency Breakdown
-                                println!("{BOLD}{RED}[{}] CRITICAL: Track failure! No route to {}. Train {} is stranded!{RESET}", 
-                                    station_name, train.destination, train.id);
+                        //             // next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to }).expect("Failed to forward train to next station");
+                        //         });
+                        //     } else {
+                        //         // THE END OF THE LINE: Emergency Breakdown
+                        //         println!("{BOLD}{RED}[{}] CRITICAL: Track failure! No route to {}. Train {} is stranded!{RESET}", 
+                        //             station_name, train.destination, train.id);
 
-                                // 1. Mail the bad news back to the Producer so they don't block forever
-                                train.report_to.as_ref().map(|sender| {
-                                    let _ = sender.send(MissionReport::Failure(
-                                        format!("Train {} stranded at {}. Track network failure to {}.", 
-                                            train.id, station_name, train.destination)
-                                    ));
-                                });
+                        //         // 1. Mail the bad news back to the Producer so they don't block forever
+                        //         train.report_to.as_ref().map(|sender| {
+                        //             let _ = sender.send(MissionReport::Failure(
+                        //                 format!("Train {} stranded at {}. Track network failure to {}.", 
+                        //                     train.id, station_name, train.destination)
+                        //             ));
+                        //         });
 
-                                // 2. Perform an emergency local breakdown
-                                println!("{YELLOW}[{}] Initiating emergency breakdown to recover assets...{RESET}", station_name);
-                                match yard.disassemble_train(train, &mut roundhouse) {
-                                    Ok(payloads) => {
-                                        // 3. Store the stranded cargo in the local warehouse
-                                        for cargo in payloads {
-                                            println!("{YELLOW}[{}] EMERGENCY STORAGE: Stowing {} ({}kg) in local warehouse.{RESET}", 
-                                                station_name, cargo.item, cargo.actual_weight);
-                                            warehouse.store(cargo);
-                                        }
-                                    },
-                                    Err(e) => println!("{RED}[{}] Disassembly failed during emergency breakdown: {:?}{RESET}", station_name, e),
-                                }
-                            }
-                        }
+                        //         // 2. Perform an emergency local breakdown
+                        //         println!("{YELLOW}[{}] Initiating emergency breakdown to recover assets...{RESET}", station_name);
+                        //         match yard.disassemble_train(train, &mut roundhouse) {
+                        //             Ok(payloads) => {
+                        //                 // 3. Store the stranded cargo in the local warehouse
+                        //                 for cargo in payloads {
+                        //                     println!("{YELLOW}[{}] EMERGENCY STORAGE: Stowing {} ({}kg) in local warehouse.{RESET}", 
+                        //                         station_name, cargo.item, cargo.actual_weight);
+                        //                     warehouse.store(cargo);
+                        //                 }
+                        //             },
+                        //             Err(e) => println!("{RED}[{}] Disassembly failed during emergency breakdown: {:?}{RESET}", station_name, e),
+                        //         }
+                        //     }
+                        // }
 
 
                     },
 
                     StationCommand::HandleEmergencySOS { mission_id, surviving_cars, report_to } => {
-                        println!("{YELLOW}[{}] Processing emergency SOS. Recovering assets...{RESET}", station_name);
-                        // Put the cars back in the yard!
-                        let num_cars = surviving_cars.len();
-                        for car in surviving_cars {
-                            let _ = yard.receive_car(car);
-                        }
-                        // Mail the failure to the producer!
-                        report_to.as_ref().map(|sender| sender.send(MissionReport::Failure(
-                            format!("EMERGENCY SOS: Train associated with Mission {} has derailed near station {}. Salvaged {} cars.", 
-                                mission_id, station_name, num_cars)
-                        )).unwrap_or_else(|e| println!("{RED}[{}] Failed to send SOS report for Mission {}: {:?}{RESET}", station_name, mission_id, e)));
-                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
-                        yard.print_report(&roundhouse);
+
+                        state.handle_emergency_sos(mission_id, surviving_cars, report_to);
+                        // println!("{YELLOW}[{}] Processing emergency SOS. Recovering assets...{RESET}", station_name);
+                        // // Put the cars back in the yard!
+                        // let num_cars = surviving_cars.len();
+                        // for car in surviving_cars {
+                        //     let _ = yard.receive_car(car);
+                        // }
+                        // // Mail the failure to the producer!
+                        // report_to.as_ref().map(|sender| sender.send(MissionReport::Failure(
+                        //     format!("EMERGENCY SOS: Train associated with Mission {} has derailed near station {}. Salvaged {} cars.", 
+                        //         mission_id, station_name, num_cars)
+                        // )).unwrap_or_else(|e| println!("{RED}[{}] Failed to send SOS report for Mission {}: {:?}{RESET}", station_name, mission_id, e)));
+                        // println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        // yard.print_report(&roundhouse);
                     },
 
                     StationCommand::IntakeCar { train_car, reply_to } => {
