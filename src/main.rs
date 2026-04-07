@@ -119,20 +119,20 @@ fn main() {
     let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5];
     // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
     let (tx_reply, rx_reply) = mpsc::channel();
-    tidmouth_incoming_cars.into_iter().for_each(|car| {
-        match tidmouth_tx.clone().send(StationCommand::IntakeCar { train_car: car, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Car successfully intaken by Tidmouth!"),
-            Err(e) => println!("Failed to intake car: {:?}", e),
-        }
-        // We will block and wait for Tidmouth to confirm that it has received the car before we send the next one. This simulates a more realistic process where the station needs to acknowledge receipt of each car before accepting the next one, and it also allows us to see the flow of messages between the main thread and the station more clearly in the console output.
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Tidmouth confirmed receipt of the car."),
-                Err(e) => println!("Tidmouth reported an error while intaking the car: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
-        }
-    });
+    match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+        Ok(_) => println!("Car successfully intaken by Tidmouth!"),
+        Err(e) => println!("Failed to intake car: {:?}", e),
+    }
+    //We will block and wait for Tidmouth to confirm that it has received the car before we send the next one. This simulates a more realistic process where the station needs to acknowledge receipt of each car before accepting the next one, and it also allows us to see the flow of messages between the main thread and the station more clearly in the console output.
+    match rx_reply.recv() {
+        Ok(result) => match result {
+            Ok(_) => println!("Tidmouth confirmed receipt of the car."),
+            Err(e) => println!("Tidmouth reported an error while intaking the car: {:?}", e),
+        },
+        Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
+    };
+
+
 
 
     tidmouth_incoming_engines.into_iter().for_each(|engine| {

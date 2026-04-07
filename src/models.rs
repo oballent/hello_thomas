@@ -304,7 +304,7 @@ pub enum StationCommand {
         report_to: Option<Sender<MissionReport>> 
     },
     IntakeCar {
-        train_car: TrainCar,
+        cars: Vec<TrainCar>,
         reply_to: Sender<Result<(), TrainError>>,
     },
     IntakeEngine {
