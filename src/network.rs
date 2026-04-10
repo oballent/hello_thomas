@@ -27,7 +27,7 @@ impl PartialOrd for RouteState {
 
 
 
-use crate::models::{Mission, MissionReport, StationCommand, Train, TrainError, Location};
+use crate::models::{Cargo, FreightOrder, Location, Mission, MissionReport, StationCommand, Train, TrainError};
 use crate::facilities::Station;
 //use std::collections::HashMap;
 use std::sync::mpsc::{self, Sender};
@@ -38,6 +38,27 @@ const GREEN: &str = "\x1b[32m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
+
+
+
+
+pub struct GlobalLedger {
+    pub pending_cargo: Vec<FreightOrder>,
+    pub active_missions: Vec<Mission>,
+    pub next_mission_id: u32,
+}
+
+impl GlobalLedger {
+    pub fn new() -> Self {
+        GlobalLedger {
+            pending_cargo: Vec::new(),
+            active_missions: Vec::new(),
+            next_mission_id: 1,
+        }
+    }
+}
+
+
 
 
 pub struct RailwayNetwork {

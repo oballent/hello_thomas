@@ -11,6 +11,27 @@ const BOLD: &str = "\x1b[1m";
 
 
 
+
+
+
+
+
+pub struct FreightOrder {
+    pub origin: String,
+    pub destination: String,
+    pub cargo: Cargo,
+}
+
+
+
+
+
+
+
+
+
+
+
 #[derive(Debug)]
 pub struct Cargo{
     pub item: String,

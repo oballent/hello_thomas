@@ -17,6 +17,85 @@ const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
 
+pub trait CanReport {
+    // Every struct that signs this must tell us its name
+    fn get_reporter_name(&self) -> &str;
+
+    // DEFAULT BEHAVIOR: Free code!
+    fn send_failure_report(&self, mission_id: u32, reason: &str, channel: &Sender<MissionReport>) {
+        let name = self.get_reporter_name();
+        let message = format!("Mission {} failed at {}. Reason: {}", mission_id, name, reason);
+        let _ = channel.send(MissionReport::Failure(message));
+    }
+
+    fn send_partial_failure_report(&self, mission_id: u32, reason: &str, lost_cargo_ids: &[u32], channel: &Sender<MissionReport>) {
+        let name = self.get_reporter_name();
+        let message = format!("Mission {} partially failed at {}. Reason: {}. Lost car IDs: {:?}", mission_id, name, reason, lost_cargo_ids);
+        let _ = channel.send(MissionReport::PartialSuccess(message));
+    }
+
+    fn send_success_report(&self, mission_id: u32, details: &str, channel: &Sender<MissionReport>) {
+        let name = self.get_reporter_name();
+        let message = format!("Mission {} successful at {}. Details: {}", mission_id, name, details);
+        let _ = channel.send(MissionReport::Success(message));
+    }
+}
+
+
+
+pub trait Receivable {
+    fn get_payload(&mut self) -> Vec<Cargo>;
+
+// The Trait Bound is the `<T: Receivable>` part!
+fn handle_arrival<T: Receivable>(&mut self, mut vehicle: T) {
+    let cargo = vehicle.get_payload(); 
+    // The compiler allows this because the Trait guarantees the method exists!
+}
+}
+
+
+
+pub trait TransitVehicle {
+    // 1. For logging:
+    fn get_id(&self) -> u32;
+    
+    // 2. For the Dijkstra Map check:
+    fn get_destination(&self) -> &String;
+    
+    // 3. For reporting to the Producer:
+    fn get_mission_id(&self) -> Option<u32>;
+    fn get_report_channel(&self) -> Option<Sender<MissionReport>>;
+    
+    // 4. To fulfill the delivery (whether it's breaking down cars or dropping a drone payload)
+    fn deliver_payload(self) -> Vec<Cargo>; 
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -30,6 +109,45 @@ pub struct Railyard {
 
 impl Railyard {
     
+
+    /// Finds any empty car in the yard, loads the cargo into it, and returns the car.
+    pub fn load_cargo_into_empty_car(&mut self, cargo: Cargo) -> Result<TrainCar, TrainError> {
+        // 1. Find the ID of an empty car
+        let empty_car_id = self.cars.iter()
+            .find(|(_, car)| car.cargo.is_none())
+            .map(|(&id, _)| id); // Just grab the ID
+
+        // 2. If we found one, remove it from the yard, load it, and return it
+        if let Some(id) = empty_car_id {
+            let mut car = self.cars.remove(&id).unwrap();
+            car.cargo = Some(cargo); // LOAD THE CAR!
+            Ok(car)
+        } else {
+            Err(TrainError::MissionImpossible { 
+                reason: "No empty cars available in the yard!".to_string() 
+            })
+        }
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     fn new() -> Self {
         Railyard {
@@ -391,7 +509,11 @@ pub struct StationState {
 
 
 
-
+impl CanReport for StationState {
+    fn get_reporter_name(&self) -> &str {
+        &self.name
+    }
+}
 
 
 impl StationState {
@@ -503,6 +625,7 @@ impl StationState {
 
     pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
         let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can die.
+        //println!("{:?}", train);
         println!("{GREEN}[{}] Processing arrival of Train {}.{RESET}", self.name, train.id);
         let final_destination = &train.destination;
         let current_location = &self.name;
@@ -521,24 +644,29 @@ impl StationState {
 
             if failed_ids.is_empty() {
                 if let Some(sender) = report_to {
-                    let report = MissionReport::Success(format!(
-                        "Train {} successfully completed Mission {} by delivering {} cars to {}.",
-                        id, mission_id.unwrap_or(0), num_cars, self.name
-                    ));
-                    let _ = sender.send(report);
+                    let details = "Successfully disassembled train and processed all cargo without issues.";
+                    self.send_success_report(mission_id.unwrap_or(0), details, &sender);
+                    // let report = MissionReport::Success(format!(
+                    //     "Train {} successfully completed Mission {} by delivering {} cars to {}.",
+                    //     id, mission_id.unwrap_or(0), num_cars, self.name
+                    // ));
+                    // let _ = sender.send(report);
                 }
             } else {
                 if let Some(sender) = report_to {
-                    let report = MissionReport::PartialSuccess(format!(
-                        "Train {} completed Mission {} by delivering {} cars to {}, but {} cars had issues during disassembly.",
-                        id, mission_id.unwrap_or(0), num_cars - failed_ids.len(), self.name, failed_ids.len()
-                    ));
-                    let _ = sender.send(report);
+                    let details = "Partial success during train disassembly. Some items in purgatory.";
+                    self.send_partial_failure_report(mission_id.unwrap_or(0), details, &failed_ids, &sender);
+                    // let report = MissionReport::PartialSuccess(format!(
+                    //     "Train {} completed Mission {} by delivering {} cars to {}, but {} cars had issues during disassembly.",
+                    //     id, mission_id.unwrap_or(0), num_cars - failed_ids.len(), self.name, failed_ids.len()
+                    // ));
+                    // let _ = sender.send(report);
                 }
             }
 
             self.print_status();
         } else {
+            let mission_id = train.mission_id.unwrap_or(0);
             let final_destination = &train.destination;
             let current_location = &self.name;
             let (distance, route) = match self.map.find_shortest_path(current_location, final_destination) {
@@ -571,11 +699,13 @@ impl StationState {
                         println!("{RED}[{}] DEAD-LETTER: Failed to send transit failure for Train {} due to unreachable destination.{RESET}", self.name, train.id);
                     }
                     if let Some(sender) = train.report_to {
-                        let report = MissionReport::Failure(format!(
-                            "Train {} failed to reach final destination {} because it is unreachable from {}.",
-                            train.id, final_destination, self.name
-                        ));
-                        let _ = sender.send(report);
+                        let reason = "Failed at the None arm of the Dijkstra check";
+                        self.send_failure_report(mission_id, reason, &sender);
+                        // let report = MissionReport::Failure(format!(
+                        //     "Train {} failed to reach final destination {} because it is unreachable from {}.",
+                        //     train.id, final_destination, self.name
+                        // ));
+                        // let _ = sender.send(report);
                     }
                     return;
                 }
@@ -590,16 +720,24 @@ impl StationState {
         
         let stranded_issues = self.process_cars(surviving_cars, Some(mission_id)); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
-        // Send the Failure Report
-        if let Some(channel) = report_to {
-            let report_msg = if stranded_issues.is_empty() {
-                format!("Mission {} derailed. Engine lost, but all surviving cars were successfully salvaged at {}.", mission_id, self.name)
-            } else {
-                format!("Mission {} derailed. Engine lost. {} cars failed intake and sit in purgatory at {}.", mission_id, stranded_issues.len(), self.name)
-            };
-
-            let _ = channel.send(MissionReport::Failure(report_msg));
+        let reason: &str = if stranded_issues.is_empty() {
+            "Engine lost, but all surviving cars were successfully salvaged."
+        } else {
+            "Engine lost, and some cars failed intake and sit in purgatory."
+        };
+        if let Some(channel) = &report_to {
+            self.send_partial_failure_report(mission_id, reason, &stranded_issues, channel);
         }
+        // Send the Failure Report
+        // if let Some(channel) = report_to {
+        //     let report_msg = if stranded_issues.is_empty() {
+        //         format!("Mission {} derailed. Engine lost, but all surviving cars were successfully salvaged at {}.", mission_id, self.name)
+        //     } else {
+        //         format!("Mission {} derailed. Engine lost. {} cars failed intake and sit in purgatory at {}.", mission_id, stranded_issues.len(), self.name)
+        //     };
+
+        //     let _ = channel.send(MissionReport::Failure(report_msg));
+        // }
         self.print_status();
     }
 
