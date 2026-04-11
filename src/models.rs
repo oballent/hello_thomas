@@ -15,11 +15,15 @@ const BOLD: &str = "\x1b[1m";
 
 
 
-
+//#[derive(Clone)]
+#[derive(Debug)]
+// The "Ticket" on the Marketplace board
 pub struct FreightOrder {
-    pub origin: String,
+    pub cargo_id: u32,
+    pub origin: String, // So the Producer knows which tx channel to use!
     pub destination: String,
-    pub cargo: Cargo,
+    pub description: String,
+    pub weight: u32,
 }
 
 

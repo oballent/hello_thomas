@@ -176,15 +176,15 @@ fn main() {
     let foam3 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
 
     //now to use the foam to create some freight orders
-    let freight_order1 = FreightOrder { cargo: foam1, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    let freight_order2 = FreightOrder { cargo: foam2, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    let freight_order3 = FreightOrder { cargo: foam3, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
+    // let freight_order1 = FreightOrder { cargo: foam1, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
+    // let freight_order2 = FreightOrder { cargo: foam2, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
+    // let freight_order3 = FreightOrder { cargo: foam3, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
     //Testing that this whole .lock() thing really works! Choo!
     {
         let mut ledger_access = shared_ledger.lock().unwrap();
-        ledger_access.pending_cargo.push(freight_order1);
-        ledger_access.pending_cargo.push(freight_order2);
-        ledger_access.pending_cargo.push(freight_order3);
+        // ledger_access.pending_cargo.push(freight_order1);
+        // ledger_access.pending_cargo.push(freight_order2);
+        // ledger_access.pending_cargo.push(freight_order3);
     }
 
 
@@ -217,52 +217,52 @@ fn main() {
 
         // 3. The lock automatically drops when `ledger_access` goes out of scope!
 
-        loop {
-            println!("test_loop");
-            // 1. Create a temporary variable to hold our assignment (if we get one)
-            let my_assignment: Option<FreightOrder> = {
+        // loop {
+        //     println!("test_loop");
+        //     // 1. Create a temporary variable to hold our assignment (if we get one)
+        //     let my_assignment: Option<FreightOrder> = {
                 
-                // --- LOCK ACQUIRED ---
-                let mut ledger_access = ledger_for_p1.lock().unwrap();
+        //         // --- LOCK ACQUIRED ---
+        //         let mut ledger_access = ledger_for_p1.lock().unwrap();
                 
-                // 2. You now have exclusive, mutable access to the GlobalLedger!
+        //         // 2. You now have exclusive, mutable access to the GlobalLedger!
 
-                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
-                // We act like a Hungry Hippo: just pop the last item off the list.
-                // If the list is empty, pop() returns None.
-                ledger_access.pending_cargo.pop() 
+        //         println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+        //         // We act like a Hungry Hippo: just pop the last item off the list.
+        //         // If the list is empty, pop() returns None.
+        //         ledger_access.pending_cargo.pop() 
                 
-            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
-            // 2. Now we are outside the lock. The ledger is free for other threads.
-            if let Some(freight_order) = my_assignment {
-                println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
+        //     }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+        //     // 2. Now we are outside the lock. The ledger is free for other threads.
+        //     if let Some(freight_order) = my_assignment {
+        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
 
-                // Build your Mission for this single piece of cargo
-                // tx.send(StationCommand::AssembleMission { ... })
-            } else {
-                // No cargo available. Sleep for a second before checking again.
-                println!("test_sleep");
-                thread::sleep(std::time::Duration::from_secs(1));
-            }
-        }
-        // println!("Producer 1: Submitting Mission 1 to the Network...");
-        // // The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
-        // let (tx_reply1, rx_reply1) = mpsc::channel();
-        // let mission1 = Mission { 
-        //     id: 1, 
-        //     request_id: 1001,
-        //     origin: String::from("Tidmouth"), 
-        //     destination: String::from("Brendam Docks"), 
-        //     required_cars: vec![2, 4], 
-        //     reply_channel: Some(tx_reply1) 
-        // };
-        // // Network creates the Conductor in the background!
-        // network_clone_1.dispatch_train_across_network(mission1); 
-        
-        // // Wait for the final report from the Conductor
-        // if let Ok(report) = rx_reply1.recv() {
-        //     println!("Producer 1 received report: {:?}", report);
+        //         // Build your Mission for this single piece of cargo
+        //         // tx.send(StationCommand::AssembleMission { ... })
+        //     } else {
+        //         // No cargo available. Sleep for a second before checking again.
+        //         println!("test_sleep");
+        //         thread::sleep(std::time::Duration::from_secs(1));
+        //     }
         // }
+        // println!("Producer 1: Submitting Mission 1 to the Network...");
+        // The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
+        let (tx_reply1, rx_reply1) = mpsc::channel();
+        let mission1 = Mission { 
+            id: 1, 
+            request_id: 1001,
+            origin: String::from("Tidmouth"), 
+            destination: String::from("Brendam Docks"), 
+            required_cars: vec![2, 4], 
+            reply_channel: Some(tx_reply1) 
+        };
+        // Network creates the Conductor in the background!
+        network_clone_1.dispatch_train_across_network(mission1); 
+        
+        // Wait for the final report from the Conductor
+        if let Ok(report) = rx_reply1.recv() {
+            println!("Producer 1 received report: {:?}", report);
+        }
     });
 
     // 4. Spawn Producer 2
@@ -276,45 +276,45 @@ fn main() {
 
         // 3. The lock automatically drops when `ledger_access` goes out of scope!
 
-        loop {
-            println!("test_loop_2");
-            // 1. Create a temporary variable to hold our assignment (if we get one)
-            let my_assignment: Option<FreightOrder> = {
+        // loop {
+        //     println!("test_loop_2");
+        //     // 1. Create a temporary variable to hold our assignment (if we get one)
+        //     let my_assignment: Option<FreightOrder> = {
                 
-                // 1. Wait in line for the Talking Stick
-                // --- LOCK ACQUIRED ---
-                let mut ledger_access = ledger_for_p2.lock().unwrap();
+        //         // 1. Wait in line for the Talking Stick
+        //         // --- LOCK ACQUIRED ---
+        //         let mut ledger_access = ledger_for_p2.lock().unwrap();
 
-                // 2. You now have exclusive, mutable access to the GlobalLedger!
-                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+        //         // 2. You now have exclusive, mutable access to the GlobalLedger!
+        //         println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
                 
-                // We act like a Hungry Hippo: just pop the last item off the list.
-                // If the list is empty, pop() returns None.
-                ledger_access.pending_cargo.pop() 
+        //         // We act like a Hungry Hippo: just pop the last item off the list.
+        //         // If the list is empty, pop() returns None.
+        //         ledger_access.pending_cargo.pop() 
                 
-            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+        //     }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
 
-            // 2. Now we are outside the lock. The ledger is free for other threads.
-            if let Some(freight_order) = my_assignment {
-                println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
+        //     // 2. Now we are outside the lock. The ledger is free for other threads.
+        //     if let Some(freight_order) = my_assignment {
+        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
 
-                // Build your Mission for this single piece of cargo
-                // tx.send(StationCommand::AssembleMission { ... })
-            } else {
-                // No cargo available. Sleep for a second before checking again.
-                thread::sleep(std::time::Duration::from_secs(1));
-            }
-        }
-        // Same thing for Producer 2, but with a different mission!
-        // let (tx_reply2, rx_reply2) = mpsc::channel();
-        // let mission2 = Mission{
-        //     id:2, 
-        //     request_id: 2002,
-        //     origin: String::from("Tidmouth"),
-        //     destination: String::from("Brendam Docks"),
-        //     required_cars: vec![6],
-        //     reply_channel: Some(tx_reply2)
-        // };
+        //         // Build your Mission for this single piece of cargo
+        //         // tx.send(StationCommand::AssembleMission { ... })
+        //     } else {
+        //         // No cargo available. Sleep for a second before checking again.
+        //         thread::sleep(std::time::Duration::from_secs(1));
+        //     }
+        // }
+        //Same thing for Producer 2, but with a different mission!
+        let (tx_reply2, rx_reply2) = mpsc::channel();
+        let mission2 = Mission{
+            id:2, 
+            request_id: 2002,
+            origin: String::from("Tidmouth"),
+            destination: String::from("Brendam Docks"),
+            required_cars: vec![6],
+            reply_channel: Some(tx_reply2)
+        };
 
         // println!("Producer 2: Submitting Mission 2 to the Network...");
         // network_clone_2.dispatch_train_across_network(mission2); 
