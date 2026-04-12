@@ -472,7 +472,24 @@ impl Warehouse {
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 pub struct StationState {
+    pub id: u32,
     pub name: String,
     pub yard: Railyard,
     pub roundhouse: Roundhouse,
@@ -480,31 +497,6 @@ pub struct StationState {
     pub map: Arc<RailwayNetwork>,
     pub tx: Sender<StationCommand>, // The Boomerang
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -517,8 +509,9 @@ impl CanReport for StationState {
 
 
 impl StationState {
-    pub fn new(name: String, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
+    pub fn new(id: u32, name: String, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
         StationState {
+            id,
             name,
             yard: Railyard::new(),
             roundhouse: Roundhouse::new(),
@@ -545,7 +538,7 @@ impl StationState {
 
 
 
-        let (distance, route) = match self.map.find_shortest_path(&self.name, &mission.destination) {
+        let (distance, route) = match self.map.find_shortest_path(self.id, mission.destination) {
             Some((d, r)) => {
                 println!(
                     "{YELLOW}Network: Shortest path for Mission {} is {} km via {:?}.{RESET}",
@@ -627,8 +620,8 @@ impl StationState {
         let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can die.
         //println!("{:?}", train);
         println!("{GREEN}[{}] Processing arrival of Train {}.{RESET}", self.name, train.id);
-        let final_destination = &train.destination;
-        let current_location = &self.name;
+        let final_destination = train.destination;
+        let current_location = self.id;
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
         if current_location == final_destination {
@@ -667,8 +660,8 @@ impl StationState {
             self.print_status();
         } else {
             let mission_id = train.mission_id.unwrap_or(0);
-            let final_destination = &train.destination;
-            let current_location = &self.name;
+            let final_destination = train.destination;
+            let current_location = self.id;
             let (distance, route) = match self.map.find_shortest_path(current_location, final_destination) {
                 Some((d, r)) => {
                     println!(
@@ -823,13 +816,13 @@ impl StationState {
     }
 
 
-    pub fn dispatch_train(&self, mut train: Train, route: Vec<String>) {
-        let final_destination = &train.destination;
+    pub fn dispatch_train(&self, mut train: Train, route: Vec<u32>) {
+        let final_destination = train.destination;
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
-        let next_stop = route.get(1).cloned().unwrap_or_else(|| final_destination.clone()); // The next stop is the second element in the route (index 1), or the final destination if the route is just one stop
-        let next_stop_handle = self.map.get_station_handle(&next_stop).expect("Next stop must exist in the network").clone();
-        let distance_to_next_stop = self.map.get_distance(&self.name, &next_stop).expect("Distance to next stop must be calculable");
+        let next_stop = route.get(1).cloned().unwrap_or_else(|| final_destination); // The next stop is the second element in the route (index 1), or the final destination if the route is just one stop
+        let next_stop_handle = self.map.get_station_handle(next_stop).expect("Next stop must exist in the network").clone();
+        let distance_to_next_stop = self.map.get_distance(self.id, next_stop).expect("Distance to next stop must be calculable");
 
         let train_id = train.id; // Store the train ID for logging inside the thread
         let station_name_clone = self.name.clone(); // Clone the station name for use in this thread
@@ -879,12 +872,14 @@ impl StationState {
 
 // This is JUST data. No threads, no channels, no logic.
     pub struct StationMetadata {
+        pub id: u32,
         pub name: String,
         pub location: Location,
 
     }
 
 pub struct Station {
+    pub id: u32,
     pub name: String,
     pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
     pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
@@ -894,13 +889,13 @@ pub struct Station {
 
 
 impl Station {
-    pub fn new(name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
+    pub fn new(id: u32, name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
         // Create a channel for this station
         // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
         let station_name = String::from(name);
-        let tx = map.get_station_handle(&station_name).expect("Station handle must exist").clone();
+        let tx = map.get_station_handle(id).expect("Station handle must exist").clone();
 
-        let mut state = StationState::new(station_name.clone(), map.clone(), tx.clone());
+        let mut state = StationState::new(id, station_name.clone(), map.clone(), tx.clone());
         // Spawn a thread to run the station's internal loop
         thread::spawn(move || {
             // The station's internal state

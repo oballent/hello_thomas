@@ -38,68 +38,75 @@ fn main() {
 
 
     // Create the Tidmouth radio BEFORE the Tidmouth thread exists
+    let tidmouth_id = 0;
     let (tidmouth_tx, tidmouth_rx) = mpsc::channel();
     let tidmouth_location = Location { x: 100.0, y: 100.0 };
     let tidmouth_name = "Tidmouth".to_string();
-    let tidmouth_md = facilities::StationMetadata { name: tidmouth_name.clone(), location: tidmouth_location };
-    network.register_station(tidmouth_name.clone(), tidmouth_md.location, tidmouth_tx.clone());
+    let tidmouth_md = facilities::StationMetadata { id: tidmouth_id, name: tidmouth_name.clone(), location: tidmouth_location };
+    network.register_station(tidmouth_id, tidmouth_md.location, tidmouth_tx.clone());
 
+    let brendam_id = 1;
     let (brendam_tx, brendam_rx) = mpsc::channel();
     let brendam_location = Location { x: 100.0, y: 350.0 };
     let brendam_name = "Brendam Docks".to_string();
-    let brendam_md = facilities::StationMetadata { name: brendam_name.clone(), location: brendam_location };
-    network.register_station(brendam_name.clone(), brendam_md.location, brendam_tx.clone());
+    let brendam_md = facilities::StationMetadata { id: brendam_id, name: brendam_name.clone(), location: brendam_location };
+    network.register_station(brendam_id, brendam_md.location, brendam_tx.clone());
 
+    let knapford_id = 2;
     let (knapford_tx, knapford_rx) = mpsc::channel();
     let knapford_location = Location { x: 300.0, y: 100.0 };
     let knapford_name = "Knapford".to_string();
-    let knapford_md = facilities::StationMetadata { name: knapford_name.clone(), location: knapford_location };
-    network.register_station(knapford_name.clone(), knapford_md.location, knapford_tx.clone());
+    let knapford_md = facilities::StationMetadata { id: knapford_id, name: knapford_name.clone(), location: knapford_location };
+    network.register_station(knapford_id, knapford_md.location, knapford_tx.clone());
 
+    let welsworth_id = 3;
     let (welsworth_tx, welsworth_rx) = mpsc::channel();
     let welsworth_location = Location { x: 300.0, y: 350.0 };
     let welsworth_name = "Welsworth".to_string();
-    let welsworth_md = facilities::StationMetadata { name: welsworth_name.clone(), location: welsworth_location };
-    network.register_station(welsworth_name.clone(), welsworth_md.location, welsworth_tx.clone());
+    let welsworth_md = facilities::StationMetadata { id: welsworth_id, name: welsworth_name.clone(), location: welsworth_location };
+    network.register_station(welsworth_id, welsworth_md.location, welsworth_tx.clone());
 
+    let maron_id = 4;
     let (maron_tx, maron_rx) = mpsc::channel();
     let maron_location = Location { x: 500.0, y: 100.0 };
     let maron_name = "Maron".to_string();
-    let maron_md = facilities::StationMetadata { name: maron_name.clone(), location: maron_location };
-    network.register_station(maron_name.clone(), maron_md.location, maron_tx.clone());
+    let maron_md = facilities::StationMetadata { id: maron_id, name: maron_name.clone(), location: maron_location };
+    network.register_station(maron_id, maron_md.location, maron_tx.clone());
 
+    let vicarstown_id = 5;
     let (vicarstown_tx, vicarstown_rx) = mpsc::channel();
     let vicarstown_location = Location { x: 500.0, y: 350.0 };
     let vicarstown_name = "Vicarstown".to_string();
-    let vicarstown_md = facilities::StationMetadata { name: vicarstown_name.clone(), location: vicarstown_location };
-    network.register_station(vicarstown_name.clone(), vicarstown_md.location, vicarstown_tx.clone());
+    let vicarstown_md = facilities::StationMetadata { id: vicarstown_id, name: vicarstown_name.clone(), location: vicarstown_location };
+    network.register_station(vicarstown_id, vicarstown_md.location, vicarstown_tx.clone());
 
+    let peel_godred_id = 6;
     let (peel_godred_tx, peel_godred_rx) = mpsc::channel();
     let peel_godred_location = Location { x: 700.0, y: 100.0 };
     let peel_godred_name = "Peel Godred".to_string();
-    let peel_godred_md = facilities::StationMetadata { name: peel_godred_name.clone(), location: peel_godred_location };
-    network.register_station(peel_godred_name.clone(), peel_godred_md.location, peel_godred_tx.clone());
+    let peel_godred_md = facilities::StationMetadata { id: peel_godred_id, name: peel_godred_name.clone(), location: peel_godred_location };
+    network.register_station(peel_godred_id, peel_godred_md.location, peel_godred_tx.clone());
 
-    network.add_track(&tidmouth_md.name, &knapford_md.name); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
-    network.add_track(&tidmouth_md.name, &peel_godred_md.name);
-    network.add_track(&knapford_md.name, &welsworth_md.name);
-    network.add_track(&knapford_md.name, &maron_md.name);
-    network.add_track(&welsworth_md.name, &brendam_md.name);
-    network.add_track(&welsworth_md.name, &maron_md.name);
-    network.add_track(&maron_md.name, &vicarstown_md.name);
+    network.add_track(tidmouth_md.id, knapford_md.id); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
+    network.add_track(tidmouth_md.id, peel_godred_md.id);
+    network.add_track(knapford_md.id, welsworth_md.id);
+    network.add_track(knapford_md.id, maron_md.id);
+    network.add_track(welsworth_md.id, brendam_md.id);
+    network.add_track(welsworth_md.id, maron_md.id);
+    network.add_track(maron_md.id, vicarstown_md.id);
 
 
     let shared_network = Arc::new(network);
 
 
     // 1. Instantiate the Stations locally
-    let tidmouth = Station::new("Tidmouth", Arc::clone(&shared_network), tidmouth_rx);
-    let brendam_docks = Station::new("Brendam Docks", Arc::clone(&shared_network), brendam_rx);
-    let knapford = Station::new("Knapford", Arc::clone(&shared_network), knapford_rx);
-    let welsworth = Station::new("Welsworth", Arc::clone(&shared_network), welsworth_rx);
-    let maron = Station::new("Maron", Arc::clone(&shared_network), maron_rx);
-    let vicarstown = Station::new("Vicarstown", Arc::clone(&shared_network), vicarstown_rx);
-    let peel_godred = Station::new("Peel Godred", Arc::clone(&shared_network), peel_godred_rx);
+    let tidmouth = Station::new(tidmouth_md.id, &tidmouth_md.name, Arc::clone(&shared_network), tidmouth_rx);
+    let brendam_docks = Station::new(brendam_md.id, &brendam_md.name, Arc::clone(&shared_network), brendam_rx);
+    let knapford = Station::new(knapford_md.id, &knapford_md.name, Arc::clone(&shared_network), knapford_rx);
+    let welsworth = Station::new(welsworth_md.id, &welsworth_md.name, Arc::clone(&shared_network), welsworth_rx);
+    let maron = Station::new(maron_md.id, &maron_md.name, Arc::clone(&shared_network), maron_rx);
+    let vicarstown = Station::new(vicarstown_md.id, &vicarstown_md.name, Arc::clone(&shared_network), vicarstown_rx);
+    let peel_godred = Station::new(peel_godred_md.id, &peel_godred_md.name, Arc::clone(&shared_network), peel_godred_rx);
 
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
@@ -175,17 +182,17 @@ fn main() {
     let foam2 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
     let foam3 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
 
-    //now to use the foam to create some freight orders
+    // //now to use the foam to create some freight orders
     // let freight_order1 = FreightOrder { cargo: foam1, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
     // let freight_order2 = FreightOrder { cargo: foam2, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
     // let freight_order3 = FreightOrder { cargo: foam3, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    //Testing that this whole .lock() thing really works! Choo!
-    {
-        let mut ledger_access = shared_ledger.lock().unwrap();
-        // ledger_access.pending_cargo.push(freight_order1);
-        // ledger_access.pending_cargo.push(freight_order2);
-        // ledger_access.pending_cargo.push(freight_order3);
-    }
+    // //Testing that this whole .lock() thing really works! Choo!
+    // {
+    //     let mut ledger_access = shared_ledger.lock().unwrap();
+    //     ledger_access.pending_cargo.push(freight_order1);
+    //     ledger_access.pending_cargo.push(freight_order2);
+    //     ledger_access.pending_cargo.push(freight_order3);
+    // }
 
 
 
@@ -245,14 +252,27 @@ fn main() {
         //         thread::sleep(std::time::Duration::from_secs(1));
         //     }
         // }
-        // println!("Producer 1: Submitting Mission 1 to the Network...");
-        // The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        println!("Producer 1: Submitting Mission 1 to the Network...");
+        //The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
         let (tx_reply1, rx_reply1) = mpsc::channel();
         let mission1 = Mission { 
             id: 1, 
             request_id: 1001,
-            origin: String::from("Tidmouth"), 
-            destination: String::from("Brendam Docks"), 
+            origin: 0,
+            destination: 6, 
             required_cars: vec![2, 4], 
             reply_channel: Some(tx_reply1) 
         };
@@ -305,23 +325,34 @@ fn main() {
         //         thread::sleep(std::time::Duration::from_secs(1));
         //     }
         // }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         //Same thing for Producer 2, but with a different mission!
         let (tx_reply2, rx_reply2) = mpsc::channel();
         let mission2 = Mission{
             id:2, 
             request_id: 2002,
-            origin: String::from("Tidmouth"),
-            destination: String::from("Brendam Docks"),
+            origin: 0,
+            destination: 6,
             required_cars: vec![6],
             reply_channel: Some(tx_reply2)
         };
 
-        // println!("Producer 2: Submitting Mission 2 to the Network...");
-        // network_clone_2.dispatch_train_across_network(mission2); 
+        println!("Producer 2: Submitting Mission 2 to the Network...");
+        network_clone_2.dispatch_train_across_network(mission2); 
         
-        // if let Ok(report) = rx_reply2.recv() {
-        //     println!("Producer 2 received report: {:?}", report);
-        // }
+        if let Ok(report) = rx_reply2.recv() {
+            println!("Producer 2 received report: {:?}", report);
+        }
     });
 
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.

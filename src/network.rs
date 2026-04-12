@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 #[derive(Clone, PartialEq)]
 struct RouteState {
     cost: f64,
-    station: String,
+    station: u32,
 }
 
 // 2. We promise the compiler we can check for absolute equality
@@ -61,15 +61,27 @@ impl GlobalLedger {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
 pub struct RailwayNetwork {
     // Maps (Origin, Destination) -> Distance in km
-    tracks: HashMap<(String, String), f64>,
+    tracks: HashMap<u32, Vec<(u32, f64)>>,
     // The network also needs to hold the Stations themselves so it can route trains between them
     //stations: HashMap<String, Station>,
     // We no longer hold physical Stations. We hold the Transmitters to their Actor threads!
-    station_handles: HashMap<String, Sender<StationCommand>>,
+    station_handles: HashMap<u32, Sender<StationCommand>>,
     //missions: HashMap<u32, Mission>, // <-- The Source of Truth for all missions on the network
-    station_locations: HashMap<String, Location>
+    station_locations: HashMap<u32, Location>
 }
 
 impl RailwayNetwork {
@@ -85,23 +97,23 @@ impl RailwayNetwork {
     
 
 
-    pub fn register_station(&mut self, name: String, location: Location, tx: Sender<StationCommand>) {
-        self.station_locations.insert(name.clone(), location);
-        self.station_handles.insert(name, tx);
+    pub fn register_station(&mut self, id: u32, location: Location, tx: Sender<StationCommand>) {
+        self.station_locations.insert(id, location);
+        self.station_handles.insert(id, tx);
     }
 
 
-pub fn add_track(&mut self, a: &str, b: &str) {
+    pub fn add_track(&mut self, a: u32, b: u32) {
         // 1. Look up the locations from our internal directory
-        let loc_a = self.station_locations.get(a).expect("Station A not found!");
-        let loc_b = self.station_locations.get(b).expect("Station B not found!");
+        let loc_a = self.station_locations.get(&a).expect("Station A not found!");
+        let loc_b = self.station_locations.get(&b).expect("Station B not found!");
 
         // 2. Do the math internally (No manual work for the user!)
         let distance = loc_a.distance_to(loc_b);
 
         // 3. Insert both directions automatically
-        self.tracks.insert((a.to_string(), b.to_string()), distance);
-        self.tracks.insert((b.to_string(), a.to_string()), distance);
+        self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
+        self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
 
         println!("{CYAN}Network: Track laid between {} and {} ({:.2}km){RESET}", a, b, distance);
     }
@@ -111,9 +123,16 @@ pub fn add_track(&mut self, a: &str, b: &str) {
     //     self.missions.insert(mission.id, mission);
     // }
 
-    pub fn get_distance(&self, origin: &str, destination: &str) -> Option<f64> {
-        // We create a temporary tuple of String objects to match the HashMap key signature.
-        self.tracks.get(&(origin.to_string(), destination.to_string())).copied()
+    pub fn get_distance(&self, origin: u32, destination: u32) -> Option<f64> {
+        // We create a temporary tuple of u32 objects to match the HashMap key signature.
+        for v in self.tracks.get(&origin) {
+            for (dest, dist) in v {
+                if *dest == destination {//dereference the reference to compare the actual value
+                    return Some(*dist);//dereference the reference to return the actual value
+                }
+            }
+        };
+        None
     }
 
     // pub fn get_mission(&self, mission_id: &u32) -> Option<&Mission> {
@@ -121,15 +140,15 @@ pub fn add_track(&mut self, a: &str, b: &str) {
     // }
 
 
-    pub fn get_station_handle(&self, station_name: &str) -> Option<&Sender<StationCommand>> {
-        self.station_handles.get(station_name)
+    pub fn get_station_handle(&self, station_id: u32) -> Option<&Sender<StationCommand>> {
+        self.station_handles.get(&station_id)
     }
 
     pub fn dispatch_train_across_network(&self, mission: Mission) {
 
 
             // Get the shortest path and distance for this mission's origin and destination
-            let (distance, route) = match self.find_shortest_path(&mission.origin, &mission.destination) {
+            let (distance, route) = match self.find_shortest_path(mission.origin, mission.destination) {
                 Some((d, r)) => {
                     println!(
                         "{YELLOW}Network: Shortest path for Mission {} is {} km via {:?}.{RESET}",
@@ -170,25 +189,25 @@ pub fn add_track(&mut self, a: &str, b: &str) {
     }
 
     // Returns an Option containing a tuple: (Total Distance, Vector of Station Names in order)
-    pub fn find_shortest_path(&self, origin: &str, destination: &str) -> Option<(f64, Vec<String>)> {
+    pub fn find_shortest_path(&self, origin: u32, destination: u32) -> Option<(f64, Vec<u32>)> {
         
         // 1. The Scoreboard: Tracks the shortest known cumulative distance to each station
-        let mut distances: HashMap<String, f64> = HashMap::new();
+        let mut distances: HashMap<u32, f64> = HashMap::new();
         
         // 2. The Breadcrumbs: Remembers the previous station so we can retrace our steps at the end
-        let mut came_from: HashMap<String, String> = HashMap::new();
+        let mut came_from: HashMap<u32, u32> = HashMap::new();
         
         // 3. The Queue: Our Min-Heap that always gives us the closest cumulative station
         let mut priority_queue = BinaryHeap::new();
 
         // Initialize: Set all known stations to Infinity
         for station in self.station_locations.keys() {
-            distances.insert(station.clone(), f64::INFINITY);
+            distances.insert(*station, f64::INFINITY);
         }
 
         // START THE WAVE: The distance from the origin to itself is 0.0
-        distances.insert(origin.to_string(), 0.0);
-        priority_queue.push(RouteState { cost: 0.0, station: origin.to_string() });
+        distances.insert(origin, 0.0);
+        priority_queue.push(RouteState { cost: 0.0, station: origin });
 
         // --- THE ALGORITHM LOOP GOES HERE ---
         // while let Some(RouteState { cost, station }) = priority_queue.pop() {
@@ -203,7 +222,7 @@ pub fn add_track(&mut self, a: &str, b: &str) {
             // If we pull a ticket that is worse than our current scoreboard, throw it away.
             let known_best = *distances.get(&station).unwrap_or(&f64::INFINITY);
             if cost > known_best {
-                continue;
+                continue;// Copilot was here. He said this is the key optimization that keeps Dijkstra's algorithm efficient. Without this check, we would process every single path to every station, even if we already found a better one. With this check, we only process each station once with its best known distance, and ignore all the "stale" tickets that are worse than what we already have on the scoreboard. Thanks, Copilot!
             }
 
             // 2. THE DESTINATION CHECK
@@ -211,13 +230,13 @@ pub fn add_track(&mut self, a: &str, b: &str) {
             if station == destination {
                 // Time to follow the breadcrumbs backwards!
                 let mut path = Vec::new();
-                let mut current = destination.to_string();
+                let mut current = destination;
                 
                 while let Some(previous) = came_from.get(&current) {
                     path.push(current.clone());
                     current = previous.clone();
                 }
-                path.push(origin.to_string());
+                path.push(origin);
                 path.reverse(); // Flip it so it goes Origin -> Destination
                 
                 return Some((cost, path));
@@ -225,8 +244,9 @@ pub fn add_track(&mut self, a: &str, b: &str) {
 
             // 3. THE SCOUTING PHASE
             // We are at a valid station. Let's look at all the tracks connected to it.
-            for ((track_origin, track_dest), &track_distance) in &self.tracks {
-                if track_origin == &station {
+            
+            if let Some(v) = self.tracks.get(&station) {
+                for (track_dest, track_distance) in v {
                     // Calculate the cumulative distance to this neighbor
                     let next_cost = cost + track_distance;
                     let neighbor_best = *distances.get(track_dest).unwrap_or(&f64::INFINITY);
@@ -235,14 +255,14 @@ pub fn add_track(&mut self, a: &str, b: &str) {
                     // If this new path is strictly better than what the neighbor currently has...
                     if next_cost < neighbor_best {
                         // ...Update the scoreboard!
-                        distances.insert(track_dest.clone(), next_cost);
+                        distances.insert(*track_dest, next_cost);
                         // ...Leave a breadcrumb pointing back to how we got here!
-                        came_from.insert(track_dest.clone(), station.clone());
+                        came_from.insert(*track_dest, station);
                         // ...Print a new ticket and throw it in the queue!
-                        priority_queue.push(RouteState { cost: next_cost, station: track_dest.clone() });
+                        priority_queue.push(RouteState { cost: next_cost, station: *track_dest });
                     }
                 }
-            }
+            };
         }
 
         // If the queue empties and we never hit the `if station == destination` block, 

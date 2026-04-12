@@ -245,7 +245,7 @@ pub struct Train{
     pub mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
-    pub destination: String, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
+    pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
     pub report_to: Option<Sender<MissionReport>>
 }
 
@@ -294,8 +294,8 @@ impl Train {
 pub struct Mission {
     pub id: u32,
     pub request_id: u64,
-    pub origin: String,
-    pub destination: String,
+    pub origin: u32,
+    pub destination: u32,
     pub required_cars: Vec<u32>,
     //Sending a channel with the mission report back to the main thread so it can print the station status after the mission is processed.
     pub reply_channel: Option<Sender<MissionReport>>,
@@ -315,8 +315,8 @@ pub enum StationCommand {
     AssembleMission {
         mission: Mission,
         distance: f64,
-        route: Vec<String>,
-        destination: String,
+        route: Vec<u32>,
+        destination: u32,
         reply_to: Sender<Result<Train, TrainError>>,
     },
     ReceiveTrain {
