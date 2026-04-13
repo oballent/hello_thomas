@@ -7,8 +7,10 @@ use crate::facilities::Station;
 use crate::network::{RailwayNetwork, GlobalLedger};
 
 use core::net;
+use std::sync::mpsc::{Sender, Receiver, channel};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+use std::collections::{HashMap};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -35,79 +37,159 @@ fn main() {
 
     let mut network = RailwayNetwork::new();
 
-
+    let mut temporary_switchboard: HashMap<u32, Sender<StationCommand>> = HashMap::new();
 
     // Create the Tidmouth radio BEFORE the Tidmouth thread exists
     let tidmouth_id = 0;
     let (tidmouth_tx, tidmouth_rx) = mpsc::channel();
+    temporary_switchboard.insert(tidmouth_id, tidmouth_tx.clone());
     let tidmouth_location = Location { x: 100.0, y: 100.0 };
     let tidmouth_name = "Tidmouth".to_string();
     let tidmouth_md = facilities::StationMetadata { id: tidmouth_id, name: tidmouth_name.clone(), location: tidmouth_location };
-    network.register_station(tidmouth_id, tidmouth_md.location, tidmouth_tx.clone());
+    network.register_station(tidmouth_id, tidmouth_md.location);
 
-    let brendam_id = 1;
-    let (brendam_tx, brendam_rx) = mpsc::channel();
-    let brendam_location = Location { x: 100.0, y: 350.0 };
-    let brendam_name = "Brendam Docks".to_string();
-    let brendam_md = facilities::StationMetadata { id: brendam_id, name: brendam_name.clone(), location: brendam_location };
-    network.register_station(brendam_id, brendam_md.location, brendam_tx.clone());
+    let brendam_docks_id = 1;
+    let (brendam_docks_tx, brendam_docks_rx) = mpsc::channel();
+    temporary_switchboard.insert(brendam_docks_id, brendam_docks_tx.clone());
+    let brendam_docks_location = Location { x: 100.0, y: 350.0 };
+    let brendam_docks_name = "Brendam Docks".to_string();
+    let brendam_docks_md = facilities::StationMetadata { id: brendam_docks_id, name: brendam_docks_name.clone(), location: brendam_docks_location };
+    network.register_station(brendam_docks_id, brendam_docks_md.location);
 
     let knapford_id = 2;
     let (knapford_tx, knapford_rx) = mpsc::channel();
+    temporary_switchboard.insert(knapford_id, knapford_tx.clone());
     let knapford_location = Location { x: 300.0, y: 100.0 };
     let knapford_name = "Knapford".to_string();
     let knapford_md = facilities::StationMetadata { id: knapford_id, name: knapford_name.clone(), location: knapford_location };
-    network.register_station(knapford_id, knapford_md.location, knapford_tx.clone());
+    network.register_station(knapford_id, knapford_md.location);
 
     let welsworth_id = 3;
     let (welsworth_tx, welsworth_rx) = mpsc::channel();
+    temporary_switchboard.insert(welsworth_id, welsworth_tx.clone());
     let welsworth_location = Location { x: 300.0, y: 350.0 };
     let welsworth_name = "Welsworth".to_string();
     let welsworth_md = facilities::StationMetadata { id: welsworth_id, name: welsworth_name.clone(), location: welsworth_location };
-    network.register_station(welsworth_id, welsworth_md.location, welsworth_tx.clone());
+    network.register_station(welsworth_id, welsworth_md.location);
 
     let maron_id = 4;
     let (maron_tx, maron_rx) = mpsc::channel();
+    temporary_switchboard.insert(maron_id, maron_tx.clone());
     let maron_location = Location { x: 500.0, y: 100.0 };
     let maron_name = "Maron".to_string();
     let maron_md = facilities::StationMetadata { id: maron_id, name: maron_name.clone(), location: maron_location };
-    network.register_station(maron_id, maron_md.location, maron_tx.clone());
+    network.register_station(maron_id, maron_md.location);
 
     let vicarstown_id = 5;
     let (vicarstown_tx, vicarstown_rx) = mpsc::channel();
+    temporary_switchboard.insert(vicarstown_id, vicarstown_tx.clone());
     let vicarstown_location = Location { x: 500.0, y: 350.0 };
     let vicarstown_name = "Vicarstown".to_string();
     let vicarstown_md = facilities::StationMetadata { id: vicarstown_id, name: vicarstown_name.clone(), location: vicarstown_location };
-    network.register_station(vicarstown_id, vicarstown_md.location, vicarstown_tx.clone());
+    network.register_station(vicarstown_id, vicarstown_md.location);
 
     let peel_godred_id = 6;
     let (peel_godred_tx, peel_godred_rx) = mpsc::channel();
+    temporary_switchboard.insert(peel_godred_id, peel_godred_tx.clone());
     let peel_godred_location = Location { x: 700.0, y: 100.0 };
     let peel_godred_name = "Peel Godred".to_string();
     let peel_godred_md = facilities::StationMetadata { id: peel_godred_id, name: peel_godred_name.clone(), location: peel_godred_location };
-    network.register_station(peel_godred_id, peel_godred_md.location, peel_godred_tx.clone());
+    network.register_station(peel_godred_id, peel_godred_md.location);
+
 
     network.add_track(tidmouth_md.id, knapford_md.id); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
     network.add_track(tidmouth_md.id, peel_godred_md.id);
     network.add_track(knapford_md.id, welsworth_md.id);
     network.add_track(knapford_md.id, maron_md.id);
-    network.add_track(welsworth_md.id, brendam_md.id);
+    network.add_track(welsworth_md.id, brendam_docks_md.id);
     network.add_track(welsworth_md.id, maron_md.id);
     network.add_track(maron_md.id, vicarstown_md.id);
+
+    
+    // let mut tidmouth_neighborhood: Vec<u32> = Vec::new();
+    // tidmouth_neighborhood.push(knapford_id);
+    // tidmouth_neighborhood.push(peel_godred_id);
+    // let mut knapford_neighborhood: Vec<u32> = Vec::new();
+    // knapford_neighborhood.push(tidmouth_id);
+    // knapford_neighborhood.push(welsworth_id);
+    // knapford_neighborhood.push(maron_id);
+    // let mut welsworth_neighborhood: Vec<u32> = Vec::new();
+    // welsworth_neighborhood.push(knapford_id);
+    // welsworth_neighborhood.push(brendam_docks_id);
+    // welsworth_neighborhood.push(maron_id);
+    // let mut maron_neighborhood: Vec<u32> = Vec::new();
+    // maron_neighborhood.push(knapford_id);
+    // maron_neighborhood.push(welsworth_id);
+    // maron_neighborhood.push(vicarstown_id);
+    // let mut vicarstown_neighborhood: Vec<u32> = Vec::new();
+    // vicarstown_neighborhood.push(maron_id);
+    // let mut peel_godred_neighborhood: Vec<u32> = Vec::new();
+    // peel_godred_neighborhood.push(tidmouth_id);
+    // let mut brendam_docks_neighborhood: Vec<u32> = Vec::new();
+    // brendam_docks_neighborhood.push(welsworth_id);
+
+
+
+
+
+    // //Copilot was here, helping with syntax as usual. Thanks, GitHub! P.S. I know this looks a bit repetitive, but it's just setting up the initial neighbor relationships for each station based on the tracks we laid. Each station needs to know who its neighbors are so it can communicate with them and send trains in the right direction when fulfilling missions. This is a crucial part of setting up the network before we start spawning station threads and dispatching missions.
+    // let tidmouth_neighbors = tidmouth_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let knapford_neighbors = knapford_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let welsworth_neighbors = welsworth_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let maron_neighbors = maron_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let vicarstown_neighbors = vicarstown_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let peel_godred_neighbors = peel_godred_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+    // let brendam_docks_neighbors = brendam_docks_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
+
+
+
+
+
+
+    // ... right after all your network.add_track() calls ...
+
+    // A helper to automatically build the neighbors HashMap by reading the tracks
+    let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
+        let mut local_neighbors = HashMap::new();
+        
+        // Look at the mathematical tracks we just laid
+        if let Some(destinations) = net.get_track(&station_id) {
+            for (neighbor_id, _distance) in destinations {
+                // Grab the radio for this specific neighbor
+                let tx = switch.get(neighbor_id).expect("Missing tx!").clone();
+                local_neighbors.insert(*neighbor_id, tx);
+            }
+        }
+        local_neighbors
+    };
+
+    // Now, instantly build the HashMaps for the Stations:
+    let tidmouth_neighbors = build_neighbors(tidmouth_id, &network, &temporary_switchboard);
+    let knapford_neighbors = build_neighbors(knapford_id, &network, &temporary_switchboard);
+    let welsworth_neighbors = build_neighbors(welsworth_id, &network, &temporary_switchboard);
+    let maron_neighbors = build_neighbors(maron_id, &network, &temporary_switchboard);
+    let vicarstown_neighbors = build_neighbors(vicarstown_id, &network, &temporary_switchboard);
+    let peel_godred_neighbors = build_neighbors(peel_godred_id, &network, &temporary_switchboard);
+    let brendam_docks_neighbors = build_neighbors(brendam_docks_id, &network, &temporary_switchboard);
+
+
+
+
+
+
 
 
     let shared_network = Arc::new(network);
 
 
     // 1. Instantiate the Stations locally
-    let tidmouth = Station::new(tidmouth_md.id, &tidmouth_md.name, Arc::clone(&shared_network), tidmouth_rx);
-    let brendam_docks = Station::new(brendam_md.id, &brendam_md.name, Arc::clone(&shared_network), brendam_rx);
-    let knapford = Station::new(knapford_md.id, &knapford_md.name, Arc::clone(&shared_network), knapford_rx);
-    let welsworth = Station::new(welsworth_md.id, &welsworth_md.name, Arc::clone(&shared_network), welsworth_rx);
-    let maron = Station::new(maron_md.id, &maron_md.name, Arc::clone(&shared_network), maron_rx);
-    let vicarstown = Station::new(vicarstown_md.id, &vicarstown_md.name, Arc::clone(&shared_network), vicarstown_rx);
-    let peel_godred = Station::new(peel_godred_md.id, &peel_godred_md.name, Arc::clone(&shared_network), peel_godred_rx);
-
+    let tidmouth = Station::new(tidmouth_md.id, &tidmouth_md.name, tidmouth_neighbors, tidmouth_tx, Arc::clone(&shared_network), tidmouth_rx);
+    let knapford = Station::new(knapford_md.id, &knapford_md.name, knapford_neighbors, knapford_tx, Arc::clone(&shared_network), knapford_rx);
+    let welsworth = Station::new(welsworth_md.id, &welsworth_md.name, welsworth_neighbors, welsworth_tx, Arc::clone(&shared_network), welsworth_rx);
+    let maron = Station::new(maron_md.id, &maron_md.name, maron_neighbors, maron_tx, Arc::clone(&shared_network), maron_rx);
+    let vicarstown = Station::new(vicarstown_md.id, &vicarstown_md.name, vicarstown_neighbors, vicarstown_tx, Arc::clone(&shared_network), vicarstown_rx);
+    let peel_godred = Station::new(peel_godred_md.id, &peel_godred_md.name, peel_godred_neighbors, peel_godred_tx, Arc::clone(&shared_network), peel_godred_rx);
+    let brendam_docks = Station::new(brendam_docks_md.id, &brendam_docks_md.name, brendam_docks_neighbors, brendam_docks_tx, Arc::clone(&shared_network), brendam_docks_rx);
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -137,7 +219,9 @@ fn main() {
     let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5];
     // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
     let (tx_reply, rx_reply) = mpsc::channel();
-    match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+    // TESTING: We can send commands to the station before it's fully integrated into the network, as long as we have its channel set up. This allows us to simulate the process of the station receiving resources and preparing for operations even before it starts handling missions from the network. It's a bit like stocking the station with supplies and engines before it starts running trains, which is a realistic part of how a station would operate in the real world.
+    // match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+    match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
         Ok(_) => println!("Car successfully intaken by Tidmouth!"),
         Err(e) => println!("Failed to intake car: {:?}", e),
     }
@@ -152,9 +236,9 @@ fn main() {
 
 
 
-
+    // TESTING. We can do the same thing with engines, sending them one at a time and waiting for confirmation from Tidmouth before sending the next one. This allows us to simulate the process of the station receiving and processing each engine individually, which is more realistic and also helps us see the message flow more clearly in the console output. It's a bit like how a station would need to inspect and prepare each engine before it can be added to the roundhouse and used for operations.
     tidmouth_incoming_engines.into_iter().for_each(|engine| {
-        match tidmouth_tx.clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+        match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
             Ok(_) => println!("Engine successfully intaken by Tidmouth!"),
             Err(e) => println!("Failed to intake engine: {:?}", e),
         }
@@ -212,17 +296,28 @@ fn main() {
     println!("{YELLOW}System Online. Spawning independent customer threads...{RESET}");
 
 
+
+
+// for id in shared_network.tracks.keys() {
+//     println!("Station {} has tracks to: {:?}", id, shared_network.tracks.get(id).unwrap().iter().map(|(dest, _)| dest).collect::<Vec<&u32>>());
+
+// }
+
+
+
+
+
     // 3. Spawn Producer 1
     let network_clone_1 = Arc::clone(&shared_network);
-    
+    let switchboard_clone_1 = temporary_switchboard.clone();
     let ledger_for_p1 = Arc::clone(&shared_ledger);
     let producer_1_handle = thread::spawn(move || {
-        // Inside the Producer thread:
-
+        println!("Producer 1: Submitting Mission 1 to the Network...");
+        let switchboard = switchboard_clone_1; // The producer can use the switchboard to send commands to stations
         // 1. Wait in line for the Talking Stick
-        //let mut ledger_access = ledger_for_p1.lock().unwrap();
+        // let mut ledger_access = ledger_for_p1.lock().unwrap();
 
-        // 3. The lock automatically drops when `ledger_access` goes out of scope!
+        // // 3. The lock automatically drops when `ledger_access` goes out of scope!
 
         // loop {
         //     println!("test_loop");
@@ -242,7 +337,7 @@ fn main() {
         //     }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
         //     // 2. Now we are outside the lock. The ledger is free for other threads.
         //     if let Some(freight_order) = my_assignment {
-        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
+        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.weight, freight_order.description);
 
         //         // Build your Mission for this single piece of cargo
         //         // tx.send(StationCommand::AssembleMission { ... })
@@ -272,12 +367,14 @@ fn main() {
             id: 1, 
             request_id: 1001,
             origin: 0,
-            destination: 6, 
+            destination: 1, 
             required_cars: vec![2, 4], 
             reply_channel: Some(tx_reply1) 
         };
         // Network creates the Conductor in the background!
-        network_clone_1.dispatch_train_across_network(mission1); 
+        let (transit_tx, transit_rx) = mpsc::channel();
+        //network_clone_1.dispatch_train_across_network(mission1); 
+        switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission1.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
         
         // Wait for the final report from the Conductor
         if let Ok(report) = rx_reply1.recv() {
@@ -287,14 +384,18 @@ fn main() {
 
     // 4. Spawn Producer 2
     let network_clone_2 = Arc::clone(&shared_network);
+    let switchwboard_clone_2 = temporary_switchboard.clone();
+
     let ledger_for_p2 = Arc::clone(&shared_ledger);
     let producer_2_handle = thread::spawn(move || {
+        // println!("Producer 2: Submitting Mission 2 to the Network...");
+        // let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
         
-        // 1. Wait in line for the Talking Stick
-        //let mut ledger_access = ledger_for_p2.lock().unwrap();
+        // // 1. Wait in line for the Talking Stick
+        // let mut ledger_access = ledger_for_p2.lock().unwrap();
 
 
-        // 3. The lock automatically drops when `ledger_access` goes out of scope!
+        // // 3. The lock automatically drops when `ledger_access` goes out of scope!
 
         // loop {
         //     println!("test_loop_2");
@@ -316,7 +417,7 @@ fn main() {
 
         //     // 2. Now we are outside the lock. The ledger is free for other threads.
         //     if let Some(freight_order) = my_assignment {
-        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.cargo.actual_weight, freight_order.cargo.item);
+        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.weight, freight_order.description);
 
         //         // Build your Mission for this single piece of cargo
         //         // tx.send(StationCommand::AssembleMission { ... })
@@ -342,13 +443,16 @@ fn main() {
             id:2, 
             request_id: 2002,
             origin: 0,
-            destination: 6,
+            destination: 1,
             required_cars: vec![6],
             reply_channel: Some(tx_reply2)
         };
 
         println!("Producer 2: Submitting Mission 2 to the Network...");
-        network_clone_2.dispatch_train_across_network(mission2); 
+
+        let (transit_tx, transit_rx) = mpsc::channel();
+        switchwboard_clone_2.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission2.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
+        //network_clone_2.dispatch_train_across_network(mission2); 
         
         if let Ok(report) = rx_reply2.recv() {
             println!("Producer 2 received report: {:?}", report);

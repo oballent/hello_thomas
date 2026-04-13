@@ -70,16 +70,16 @@ impl GlobalLedger {
 
 
 
-
+// Using type aliases to make the code highly readable without sacrificing performance
+pub type StationId = u32;
+pub type Distance = f64;
 
 
 pub struct RailwayNetwork {
     // Maps (Origin, Destination) -> Distance in km
-    tracks: HashMap<u32, Vec<(u32, f64)>>,
-    // The network also needs to hold the Stations themselves so it can route trains between them
-    //stations: HashMap<String, Station>,
-    // We no longer hold physical Stations. We hold the Transmitters to their Actor threads!
-    station_handles: HashMap<u32, Sender<StationCommand>>,
+    tracks: HashMap<StationId, Vec<(StationId, Distance)>>,
+// We keep this purely for UI/Debugging translation, NOT for logic.
+    pub station_names: HashMap<StationId, String>,
     //missions: HashMap<u32, Mission>, // <-- The Source of Truth for all missions on the network
     station_locations: HashMap<u32, Location>
 }
@@ -89,7 +89,7 @@ impl RailwayNetwork {
         RailwayNetwork {
             tracks: HashMap::new(),
             //stations: HashMap::new(),
-            station_handles: HashMap::new(),
+            station_names: HashMap::new(),
             //missions: HashMap::new(),
             station_locations: HashMap::new(),
         }
@@ -97,9 +97,8 @@ impl RailwayNetwork {
     
 
 
-    pub fn register_station(&mut self, id: u32, location: Location, tx: Sender<StationCommand>) {
+    pub fn register_station(&mut self, id: u32, location: Location) {
         self.station_locations.insert(id, location);
-        self.station_handles.insert(id, tx);
     }
 
 
@@ -123,8 +122,8 @@ impl RailwayNetwork {
     //     self.missions.insert(mission.id, mission);
     // }
 
-    pub fn get_distance(&self, origin: u32, destination: u32) -> Option<f64> {
-        // We create a temporary tuple of u32 objects to match the HashMap key signature.
+    pub fn get_distance(&self, origin: StationId, destination: StationId) -> Option<Distance> {
+        // We create a temporary tuple of StationId objects to match the HashMap key signature.
         for v in self.tracks.get(&origin) {
             for (dest, dist) in v {
                 if *dest == destination {//dereference the reference to compare the actual value
@@ -140,62 +139,15 @@ impl RailwayNetwork {
     // }
 
 
-    pub fn get_station_handle(&self, station_id: u32) -> Option<&Sender<StationCommand>> {
-        self.station_handles.get(&station_id)
-    }
-
-    pub fn dispatch_train_across_network(&self, mission: Mission) {
-
-
-            // Get the shortest path and distance for this mission's origin and destination
-            let (distance, route) = match self.find_shortest_path(mission.origin, mission.destination) {
-                Some((d, r)) => {
-                    println!(
-                        "{YELLOW}Network: Shortest path for Mission {} is {} km via {:?}.{RESET}",
-                        mission.id, d, r
-                    );
-                    (d, r)
-                },
-                None => {
-                    println!("{RED}Network Error: No track laid between {} and {}.{RESET}", mission.origin, mission.destination);
-                    return;
-                }
-            };
-
-
-            // 3. Find the Origin and Destination Radios
-            let origin_tx = match self.station_handles.get(&mission.origin) {
-                Some(tx) =>{
-                    println!("{GREEN}Network: Found radio transmitter for origin station {}.{RESET}", mission.origin);
-                    tx.clone()
-                }
-                None => {
-                    println!("{RED}Network Error: No radio transmitter found for origin station {}.{RESET}", mission.origin);
-                    return;
-                }
-            };
-            let (transit_tx, transit_rx) = mpsc::channel::<Result<Train, TrainError>>();
-            
-            
-            // 5. Send the command to the Origin!
-            println!("{YELLOW}Network: Ordering {} to assemble Mission {}.{RESET}", mission.origin, mission.id);
-            let _ = origin_tx.send(StationCommand::AssembleMission {
-                mission: mission.clone(),
-                distance,
-                reply_to: transit_tx,
-                route: route.clone(),
-                destination: mission.destination.clone(),
-            });
-    }
 
     // Returns an Option containing a tuple: (Total Distance, Vector of Station Names in order)
-    pub fn find_shortest_path(&self, origin: u32, destination: u32) -> Option<(f64, Vec<u32>)> {
+    pub fn find_shortest_path(&self, origin: StationId, destination: StationId) -> Option<(Distance, Vec<StationId>)> {
         
         // 1. The Scoreboard: Tracks the shortest known cumulative distance to each station
-        let mut distances: HashMap<u32, f64> = HashMap::new();
+        let mut distances: HashMap<StationId, Distance> = HashMap::new();
         
         // 2. The Breadcrumbs: Remembers the previous station so we can retrace our steps at the end
-        let mut came_from: HashMap<u32, u32> = HashMap::new();
+        let mut came_from: HashMap<StationId, StationId> = HashMap::new();
         
         // 3. The Queue: Our Min-Heap that always gives us the closest cumulative station
         let mut priority_queue = BinaryHeap::new();
@@ -270,6 +222,10 @@ impl RailwayNetwork {
         //None
 
         None // Temporary return
+    }
+
+    pub fn get_track(&self, station_id: &u32) -> Option<&Vec<(StationId, Distance)>> {
+        self.tracks.get(station_id)
     }
 
 }

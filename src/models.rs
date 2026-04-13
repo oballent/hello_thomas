@@ -314,9 +314,6 @@ pub enum MissionReport {
 pub enum StationCommand {
     AssembleMission {
         mission: Mission,
-        distance: f64,
-        route: Vec<u32>,
-        destination: u32,
         reply_to: Sender<Result<Train, TrainError>>,
     },
     ReceiveTrain {
@@ -335,6 +332,10 @@ pub enum StationCommand {
     IntakeEngine {
         engine: Engine,
         reply_to: Sender<Result<(), TrainError>>,
+    },
+    NewNeighbor {
+        neighbor: u32,
+        neighbor_tx: Sender<StationCommand>,
     },
     PrintStatus,                   // Reporting
     Terminate,                     // Graceful Shutdown

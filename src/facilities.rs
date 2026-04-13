@@ -486,6 +486,81 @@ impl Warehouse {
 
 
 
+// This is JUST data. No threads, no channels, no logic.
+pub struct StationMetadata {
+    pub id: u32,
+    pub name: String,
+    pub location: Location,
+
+}
+
+pub struct Station {
+    pub id: u32,
+    pub name: String,
+    pub neighbors: HashMap<u32, Sender<StationCommand>>, // The station's direct neighbors and their command channels
+    pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
+    pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
+    pub location: Location, // The station's location on the network (for distance calculations)
+    // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
+}
+
+
+impl Station {
+    pub fn new(id: u32, name: &str, neighbors: HashMap<u32, Sender<StationCommand>>, tx: Sender<StationCommand>, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
+        // Create a channel for this station
+        // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
+        let station_name = String::from(name);
+        let tx = tx; // The station's own Sender for receiving commands
+
+        let mut state = StationState::new(id, station_name.clone(), neighbors, map.clone(), tx.clone());
+        // Spawn a thread to run the station's internal loop
+        thread::spawn(move || {
+            // The station's internal state
+            println!("{BOLD}{CYAN}[{}] Station is now operational and awaiting commands...{RESET}", station_name);
+
+            // The station's main loop
+            for command in rx {
+                match command {
+                    StationCommand::AssembleMission { mission, reply_to } => {
+                        state.handle_assemble_mission(mission, reply_to);
+                    },
+                    StationCommand::ReceiveTrain {mut train, reply_to } => {
+                        state.handle_receive_train(train, reply_to);
+                    },
+
+                    StationCommand::HandleEmergencySOS { mission_id, surviving_cars, report_to } => {
+                        state.handle_emergency_sos(mission_id, surviving_cars, report_to);
+                    },
+
+                    StationCommand::IntakeCar { cars, reply_to } => {
+                       state.handle_intake_cars(cars, Some(reply_to));
+                    },
+                    StationCommand::IntakeEngine { engine, reply_to } => {
+                        println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
+                        state.handle_intake_engine(engine, Some(reply_to));
+                    }
+                    StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
+                        state.handle_new_neighbor(neighbor, neighbor_tx);
+                    },
+                    StationCommand::PrintStatus => {
+                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        state.print_status();
+                    },
+                    StationCommand::Terminate => {
+                        println!("{BOLD}{RED}[{}] Termination command received. Shutting down station thread.{RESET}", station_name);
+                        break; // Exit the loop to terminate the thread
+                    },
+                }
+
+            }
+        });
+        
+    }
+
+
+}
+
+
 
 
 pub struct StationState {
@@ -494,6 +569,7 @@ pub struct StationState {
     pub yard: Railyard,
     pub roundhouse: Roundhouse,
     pub warehouse: Warehouse,
+    pub neighbors: HashMap<u32, Sender<StationCommand>>,
     pub map: Arc<RailwayNetwork>,
     pub tx: Sender<StationCommand>, // The Boomerang
 }
@@ -509,13 +585,14 @@ impl CanReport for StationState {
 
 
 impl StationState {
-    pub fn new(id: u32, name: String, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
+    pub fn new(id: u32, name: String, neighbors: HashMap<u32, Sender<StationCommand>>, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
         StationState {
             id,
             name,
             yard: Railyard::new(),
             roundhouse: Roundhouse::new(),
             warehouse: Warehouse::new(),
+            neighbors,
             map,
             tx,
         }
@@ -775,6 +852,13 @@ impl StationState {
         }
     }
 
+
+    pub fn handle_new_neighbor(&mut self, neighbor: u32, tx: Sender<StationCommand>) {
+        println!("{BOLD}{CYAN}[{}] Track connected to neighbor: {}.{RESET}", self.name, neighbor);
+        self.neighbors.insert(neighbor, tx);
+    }
+
+
     pub fn print_status(&self) {
         println!("{BOLD}{CYAN}--- Station Status: {} ---{RESET}", self.name);
         self.yard.print_report(&self.roundhouse);
@@ -821,7 +905,7 @@ impl StationState {
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
         let next_stop = route.get(1).cloned().unwrap_or_else(|| final_destination); // The next stop is the second element in the route (index 1), or the final destination if the route is just one stop
-        let next_stop_handle = self.map.get_station_handle(next_stop).expect("Next stop must exist in the network").clone();
+        let next_stop_handle = self.neighbors.get(&next_stop).expect("Next stop must be a neighbor").clone(); // Get the Sender for the next stop
         let distance_to_next_stop = self.map.get_distance(self.id, next_stop).expect("Distance to next stop must be calculable");
 
         let train_id = train.id; // Store the train ID for logging inside the thread
@@ -836,7 +920,7 @@ impl StationState {
             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
             let tree_falls = rand::thread_rng().gen_bool(0.1);
             if tree_falls {
-                println!("{RED}🚨 DERAILMENT!{RESET}");
+                println!("{RED}🚨 DERAILMENT: Train {}!{RESET}", train_id);
 
                 // We send an SOS command BACK to the Station's main mailbox!
                 // (You will need to pass a clone of the Station's own Sender into the thread)
@@ -864,78 +948,8 @@ impl StationState {
             }
         });                  
     }
+    
 
 }
 
 
-
-
-// This is JUST data. No threads, no channels, no logic.
-    pub struct StationMetadata {
-        pub id: u32,
-        pub name: String,
-        pub location: Location,
-
-    }
-
-pub struct Station {
-    pub id: u32,
-    pub name: String,
-    pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
-    pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
-    pub location: Location, // The station's location on the network (for distance calculations)
-    // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
-}
-
-
-impl Station {
-    pub fn new(id: u32, name: &str, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
-        // Create a channel for this station
-        // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
-        let station_name = String::from(name);
-        let tx = map.get_station_handle(id).expect("Station handle must exist").clone();
-
-        let mut state = StationState::new(id, station_name.clone(), map.clone(), tx.clone());
-        // Spawn a thread to run the station's internal loop
-        thread::spawn(move || {
-            // The station's internal state
-            println!("{BOLD}{CYAN}[{}] Station is now operational and awaiting commands...{RESET}", station_name);
-
-            // The station's main loop
-            for command in rx {
-                match command {
-                    StationCommand::AssembleMission { mission, distance, route, destination, reply_to } => {
-                        state.handle_assemble_mission(mission, reply_to);
-                    },
-                    StationCommand::ReceiveTrain {mut train, reply_to } => {
-                        state.handle_receive_train(train, reply_to);
-                    },
-
-                    StationCommand::HandleEmergencySOS { mission_id, surviving_cars, report_to } => {
-                        state.handle_emergency_sos(mission_id, surviving_cars, report_to);
-                    },
-
-                    StationCommand::IntakeCar { cars, reply_to } => {
-                       state.handle_intake_cars(cars, Some(reply_to));
-                    },
-                    StationCommand::IntakeEngine { engine, reply_to } => {
-                        println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
-                        state.handle_intake_engine(engine, Some(reply_to));
-                    }
-                    StationCommand::PrintStatus => {
-                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
-                        state.print_status();
-                    },
-                    StationCommand::Terminate => {
-                        println!("{BOLD}{RED}[{}] Termination command received. Shutting down station thread.{RESET}", station_name);
-                        break; // Exit the loop to terminate the thread
-                    },
-                }
-
-            }
-        });
-        
-    }
-
-
-}
