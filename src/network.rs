@@ -78,7 +78,7 @@ pub type Distance = f64;
 pub struct RailwayNetwork {
     // Maps (Origin, Destination) -> Distance in km
     tracks: HashMap<StationId, Vec<(StationId, Distance)>>,
-// We keep this purely for UI/Debugging translation, NOT for logic.
+    // We keep this purely for UI/Debugging translation, NOT for logic.
     pub station_names: HashMap<StationId, String>,
     //missions: HashMap<u32, Mission>, // <-- The Source of Truth for all missions on the network
     station_locations: HashMap<u32, Location>
@@ -111,8 +111,15 @@ impl RailwayNetwork {
         let distance = loc_a.distance_to(loc_b);
 
         // 3. Insert both directions automatically
-        self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
-        self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
+        // We use `entry().or_insert_with()` to either get the existing vector of tracks for that station or create a new one if it doesn't exist. Then we push the new track onto that vector. This way, we maintain a complete list of all tracks connected to each station.
+        if self.tracks.contains_key(&a) && self.tracks[&a].iter().any(|(dest, _)| *dest == b) {
+            println!("{YELLOW}Network: Track already exists between {} and {}. Skipping.{RESET}", a, b);
+            return;
+        } else {
+            println!("{CYAN}Network: Laying track between {} and {} ({:.2}km){RESET}", a, b, distance);
+            self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
+            self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
+        }
 
         println!("{CYAN}Network: Track laid between {} and {} ({:.2}km){RESET}", a, b, distance);
     }
@@ -174,7 +181,7 @@ impl RailwayNetwork {
             // If we pull a ticket that is worse than our current scoreboard, throw it away.
             let known_best = *distances.get(&station).unwrap_or(&f64::INFINITY);
             if cost > known_best {
-                continue;// Copilot was here. He said this is the key optimization that keeps Dijkstra's algorithm efficient. Without this check, we would process every single path to every station, even if we already found a better one. With this check, we only process each station once with its best known distance, and ignore all the "stale" tickets that are worse than what we already have on the scoreboard. Thanks, Copilot!
+                continue;// Copilot was here. They said this is the key optimization that keeps Dijkstra's algorithm efficient. Without this check, we would process every single path to every station, even if we already found a better one. Thanks, Copilot!
             }
 
             // 2. THE DESTINATION CHECK
@@ -224,7 +231,7 @@ impl RailwayNetwork {
         None // Temporary return
     }
 
-    pub fn get_track(&self, station_id: &u32) -> Option<&Vec<(StationId, Distance)>> {
+    pub fn get_tracks(&self, station_id: &u32) -> Option<&Vec<(StationId, Distance)>> {
         self.tracks.get(station_id)
     }
 

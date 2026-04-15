@@ -19,141 +19,115 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
-// This program demonstrates the physics of Rust and Networking in the context of a train yard on the Island of Sodor. It has evolved from a simple simulation of trains moving between stations to a more complex system that includes concurrent producer threads submitting missions to a central network, which then dispatches trains across the network to fulfill those missions. The program uses Rust's ownership model, concurrency primitives, and error handling to create a robust and realistic simulation of a railway network.
-// I AM The Fat Controller, or, at least, I would be, if this were built around a centralized God Object: All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
+use serde::Deserialize;
+
+#[derive(Deserialize, Debug)]
+pub struct Config {
+    pub stations: Vec<StationConfig>,
+    pub tracks: Vec<TrackConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct StationConfig {
+    pub id: u32,
+    pub name: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct TrackConfig {
+    pub origin: u32,
+    pub destination: u32,
+}
+
+// This program demonstrates the physics of Rust and Networking in the context of a Railway Network on the Island of Sodor.
+// It has evolved from a simple monolithic architecture to a more complex asynchronous and distributed system.
+// Each station operates independently and communicates with its neighbors through message passing.
+// The main thread serves as the central hub for initializing the network and spawning producer threads that create missions for the stations to fulfill.
+// Each station runs in its own thread, managing its internal state and resources while responding to commands from the producers and coordinating with neighboring stations to dispatch trains across the network.
+// The use of channels for communication and Arc/Mutex for shared state allows us to maintain thread safety while enabling a dynamic and interactive simulation of a railway system.
+
+// I AM The Fat Controller - or, at least, I would be if this were built around a Monolithic Architecture - but it's not!
+// Asynchronous and Distributed systems are the name of the game! All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
+// P.S. Copilot was here, helping me write this code! Rust is hard, but together we can do it! Let's build the best darn Sodor railway simulation the world has ever seen! Choo choo!
+// Ahem, let's get this show on the rails!
 
 fn main() {
 
+    // 1. Read the raw text from the file
+    let file_content = std::fs::read_to_string("sodor.json").expect("Failed to read sodor.json");
+    
+    // 2. SERDE MAGIC: Convert the JSON text directly into our Rust Structs!
+    let config: Config = serde_json::from_str(&file_content).expect("Failed to parse JSON");
 
+    println!("{GREEN}Loaded {} stations and {} tracks from config.{RESET}", config.stations.len(), config.tracks.len());
+
+    let mut network = RailwayNetwork::new();
+    let mut temporary_switchboard: HashMap<u32, Sender<StationCommand>> = HashMap::new();
+
+    // NEW: A temporary holding pen for the receivers!
+    let mut temporary_receivers: HashMap<u32, Receiver<StationCommand>> = HashMap::new();
+
+
+    for station in &config.stations {
+        let (tx, rx) = mpsc::channel();
+        temporary_switchboard.insert(station.id, tx.clone());
+        temporary_receivers.insert(station.id, rx);
+        
+        let loc = Location { x: station.x, y: station.y };
+        network.register_station(station.id, loc);
+    }
+
+    for track in &config.tracks {
+        network.add_track(track.origin, track.destination);
+    }
 
     // 1. Create the raw data
     let ledger = GlobalLedger::new();
-    
     // 2. Put it in the Mutex Vault (The Talking Stick)
     let locked_ledger = Mutex::new(ledger);
-    
     // 3. Put the Vault in an Arc so multiple threads can find it
     let shared_ledger = Arc::new(locked_ledger);
 
-    let mut network = RailwayNetwork::new();
-
-    let mut temporary_switchboard: HashMap<u32, Sender<StationCommand>> = HashMap::new();
-
-    // Create the Tidmouth radio BEFORE the Tidmouth thread exists
-    let tidmouth_id = 0;
-    let (tidmouth_tx, tidmouth_rx) = mpsc::channel();
-    temporary_switchboard.insert(tidmouth_id, tidmouth_tx.clone());
-    let tidmouth_location = Location { x: 100.0, y: 100.0 };
-    let tidmouth_name = "Tidmouth".to_string();
-    let tidmouth_md = facilities::StationMetadata { id: tidmouth_id, name: tidmouth_name.clone(), location: tidmouth_location };
-    network.register_station(tidmouth_id, tidmouth_md.location);
-
-    let brendam_docks_id = 1;
-    let (brendam_docks_tx, brendam_docks_rx) = mpsc::channel();
-    temporary_switchboard.insert(brendam_docks_id, brendam_docks_tx.clone());
-    let brendam_docks_location = Location { x: 100.0, y: 350.0 };
-    let brendam_docks_name = "Brendam Docks".to_string();
-    let brendam_docks_md = facilities::StationMetadata { id: brendam_docks_id, name: brendam_docks_name.clone(), location: brendam_docks_location };
-    network.register_station(brendam_docks_id, brendam_docks_md.location);
-
-    let knapford_id = 2;
-    let (knapford_tx, knapford_rx) = mpsc::channel();
-    temporary_switchboard.insert(knapford_id, knapford_tx.clone());
-    let knapford_location = Location { x: 300.0, y: 100.0 };
-    let knapford_name = "Knapford".to_string();
-    let knapford_md = facilities::StationMetadata { id: knapford_id, name: knapford_name.clone(), location: knapford_location };
-    network.register_station(knapford_id, knapford_md.location);
-
-    let welsworth_id = 3;
-    let (welsworth_tx, welsworth_rx) = mpsc::channel();
-    temporary_switchboard.insert(welsworth_id, welsworth_tx.clone());
-    let welsworth_location = Location { x: 300.0, y: 350.0 };
-    let welsworth_name = "Welsworth".to_string();
-    let welsworth_md = facilities::StationMetadata { id: welsworth_id, name: welsworth_name.clone(), location: welsworth_location };
-    network.register_station(welsworth_id, welsworth_md.location);
-
-    let maron_id = 4;
-    let (maron_tx, maron_rx) = mpsc::channel();
-    temporary_switchboard.insert(maron_id, maron_tx.clone());
-    let maron_location = Location { x: 500.0, y: 100.0 };
-    let maron_name = "Maron".to_string();
-    let maron_md = facilities::StationMetadata { id: maron_id, name: maron_name.clone(), location: maron_location };
-    network.register_station(maron_id, maron_md.location);
-
-    let vicarstown_id = 5;
-    let (vicarstown_tx, vicarstown_rx) = mpsc::channel();
-    temporary_switchboard.insert(vicarstown_id, vicarstown_tx.clone());
-    let vicarstown_location = Location { x: 500.0, y: 350.0 };
-    let vicarstown_name = "Vicarstown".to_string();
-    let vicarstown_md = facilities::StationMetadata { id: vicarstown_id, name: vicarstown_name.clone(), location: vicarstown_location };
-    network.register_station(vicarstown_id, vicarstown_md.location);
-
-    let peel_godred_id = 6;
-    let (peel_godred_tx, peel_godred_rx) = mpsc::channel();
-    temporary_switchboard.insert(peel_godred_id, peel_godred_tx.clone());
-    let peel_godred_location = Location { x: 700.0, y: 100.0 };
-    let peel_godred_name = "Peel Godred".to_string();
-    let peel_godred_md = facilities::StationMetadata { id: peel_godred_id, name: peel_godred_name.clone(), location: peel_godred_location };
-    network.register_station(peel_godred_id, peel_godred_md.location);
 
 
-    network.add_track(tidmouth_md.id, knapford_md.id); //we only need to pass references one way because the track is bidirectional. Once the track is laid, both stations can access it through the network's internal data structures.
-    network.add_track(tidmouth_md.id, peel_godred_md.id);
-    network.add_track(knapford_md.id, welsworth_md.id);
-    network.add_track(knapford_md.id, maron_md.id);
-    network.add_track(welsworth_md.id, brendam_docks_md.id);
-    network.add_track(welsworth_md.id, maron_md.id);
-    network.add_track(maron_md.id, vicarstown_md.id);
+
 
     
-    // let mut tidmouth_neighborhood: Vec<u32> = Vec::new();
-    // tidmouth_neighborhood.push(knapford_id);
-    // tidmouth_neighborhood.push(peel_godred_id);
-    // let mut knapford_neighborhood: Vec<u32> = Vec::new();
-    // knapford_neighborhood.push(tidmouth_id);
-    // knapford_neighborhood.push(welsworth_id);
-    // knapford_neighborhood.push(maron_id);
-    // let mut welsworth_neighborhood: Vec<u32> = Vec::new();
-    // welsworth_neighborhood.push(knapford_id);
-    // welsworth_neighborhood.push(brendam_docks_id);
-    // welsworth_neighborhood.push(maron_id);
-    // let mut maron_neighborhood: Vec<u32> = Vec::new();
-    // maron_neighborhood.push(knapford_id);
-    // maron_neighborhood.push(welsworth_id);
-    // maron_neighborhood.push(vicarstown_id);
-    // let mut vicarstown_neighborhood: Vec<u32> = Vec::new();
-    // vicarstown_neighborhood.push(maron_id);
-    // let mut peel_godred_neighborhood: Vec<u32> = Vec::new();
-    // peel_godred_neighborhood.push(tidmouth_id);
-    // let mut brendam_docks_neighborhood: Vec<u32> = Vec::new();
-    // brendam_docks_neighborhood.push(welsworth_id);
+
+    // Copilot, wanna try making build_neighbors more functional? Maybe we can use iterators and maps instead of a for loop and mutable HashMap? Let's see if we can make it more concise and elegant while still being clear and efficient. What do you think, Copilot? Can you help me refactor this code to be more functional? Let's give it a shot! Choo choo!
+    // NEW AND IMPROVED: A more functional approach to building the neighbors HashMap for each station! Instead of using a mutable HashMap and a for loop, we can use iterators and the filter_map method to create the neighbors HashMap in a more concise and elegant way. This approach is more in line with Rust's functional programming style and can be easier to read once you're familiar with the iterator methods. Let's see how it looks!
+
+    let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
+        net.get_tracks(&station_id)
+            .into_iter()     // Turn the Option into an Iterator (yields 0 or 1 item)
+            .flatten()       // Flatten the inner Vec into a stream of (dest_id, distance) tuples
+            .map(|(dest_id, _distance)| {
+                let tx = switch.get(dest_id).expect("Missing tx!").clone();
+                (*dest_id, tx)
+            })
+            .collect()       // Automatically gather the (K, V) tuples into a HashMap!
+    };
+
+    // The above function works as follows:
+    // 1. We call net.get_tracks(&station_id) to get the Option<&Vec<(u32, f64)>> of tracks from the station. This will yield Some(vec) if there are tracks, or None if there are no tracks.
+    // 2. We use into_iter() to turn the Option into an Iterator. If it's Some(vec), we get an iterator over that vec. If it's None, we get an empty iterator.
+    // 3. We use flatten() to take the inner Vec<(u32, f64)> and turn it into a stream of (dest_id, distance) tuples. If there were no tracks, this will just be an empty stream.
+    // 4. We use map() to transform each (dest_id, distance) tuple into a (dest_id, tx) tuple, where tx is the Sender<StationCommand> for that destination station. We look up the tx in the switchboard HashMap using switch.get(dest_id), and we clone it to get a new Sender that we can store in our neighbors HashMap.
+    // 5. Finally, we use collect() to gather all the (dest_id, tx) tuples into a HashMap<u32, Sender<StationCommand>>, which is the type we want for our neighbors. If there were no tracks, this will just be an empty HashMap.
+    // Nice.
 
 
 
 
-
-    // //Copilot was here, helping with syntax as usual. Thanks, GitHub! P.S. I know this looks a bit repetitive, but it's just setting up the initial neighbor relationships for each station based on the tracks we laid. Each station needs to know who its neighbors are so it can communicate with them and send trains in the right direction when fulfilling missions. This is a crucial part of setting up the network before we start spawning station threads and dispatching missions.
-    // let tidmouth_neighbors = tidmouth_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let knapford_neighbors = knapford_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let welsworth_neighbors = welsworth_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let maron_neighbors = maron_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let vicarstown_neighbors = vicarstown_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let peel_godred_neighbors = peel_godred_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-    // let brendam_docks_neighbors = brendam_docks_neighborhood.into_iter().map(|id| (id, temporary_switchboard.get(&id).expect("Neighbor station channel must exist").clone())).collect();
-
-
-
-
-
-
-    // ... right after all your network.add_track() calls ...
-
-    // A helper to automatically build the neighbors HashMap by reading the tracks
+    // At this point, we have created the stations and laid the tracks on the network, but we haven't yet built the neighbor HashMaps for each station. The stations need to know who their neighbors are so they can send commands to them, but we can't build those HashMaps until we've laid the tracks, because the tracks are what define the neighbor relationships between the stations.
+    // Now that we have the tracks in place, we can look at the network's internal data structures to see which stations are connected to which, and use that information to populate the neighbor HashMaps for each station before we spawn their threads.
     let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
         let mut local_neighbors = HashMap::new();
         
         // Look at the mathematical tracks we just laid
-        if let Some(destinations) = net.get_track(&station_id) {
+        if let Some(destinations) = net.get_tracks(&station_id) {
             for (neighbor_id, _distance) in destinations {
                 // Grab the radio for this specific neighbor
                 let tx = switch.get(neighbor_id).expect("Missing tx!").clone();
@@ -163,18 +137,6 @@ fn main() {
         local_neighbors
     };
 
-    // Now, instantly build the HashMaps for the Stations:
-    let tidmouth_neighbors = build_neighbors(tidmouth_id, &network, &temporary_switchboard);
-    let knapford_neighbors = build_neighbors(knapford_id, &network, &temporary_switchboard);
-    let welsworth_neighbors = build_neighbors(welsworth_id, &network, &temporary_switchboard);
-    let maron_neighbors = build_neighbors(maron_id, &network, &temporary_switchboard);
-    let vicarstown_neighbors = build_neighbors(vicarstown_id, &network, &temporary_switchboard);
-    let peel_godred_neighbors = build_neighbors(peel_godred_id, &network, &temporary_switchboard);
-    let brendam_docks_neighbors = build_neighbors(brendam_docks_id, &network, &temporary_switchboard);
-
-
-
-
 
 
 
@@ -182,14 +144,23 @@ fn main() {
     let shared_network = Arc::new(network);
 
 
-    // 1. Instantiate the Stations locally
-    let tidmouth = Station::new(tidmouth_md.id, &tidmouth_md.name, tidmouth_neighbors, tidmouth_tx, Arc::clone(&shared_network), tidmouth_rx);
-    let knapford = Station::new(knapford_md.id, &knapford_md.name, knapford_neighbors, knapford_tx, Arc::clone(&shared_network), knapford_rx);
-    let welsworth = Station::new(welsworth_md.id, &welsworth_md.name, welsworth_neighbors, welsworth_tx, Arc::clone(&shared_network), welsworth_rx);
-    let maron = Station::new(maron_md.id, &maron_md.name, maron_neighbors, maron_tx, Arc::clone(&shared_network), maron_rx);
-    let vicarstown = Station::new(vicarstown_md.id, &vicarstown_md.name, vicarstown_neighbors, vicarstown_tx, Arc::clone(&shared_network), vicarstown_rx);
-    let peel_godred = Station::new(peel_godred_md.id, &peel_godred_md.name, peel_godred_neighbors, peel_godred_tx, Arc::clone(&shared_network), peel_godred_rx);
-    let brendam_docks = Station::new(brendam_docks_md.id, &brendam_docks_md.name, brendam_docks_neighbors, brendam_docks_tx, Arc::clone(&shared_network), brendam_docks_rx);
+    for station in &config.stations {
+        let neighbors = build_neighbors(station.id, &shared_network, &temporary_switchboard);
+        println!("Station {} has neighbors: {:?}", station.name, neighbors.keys().collect::<Vec<&u32>>());
+
+        let tx = temporary_switchboard.get(&station.id).expect("Missing tx!").clone();
+        let rx = temporary_receivers.remove(&station.id).expect("Missing rx!");
+
+        
+        Station::new(
+            station.id, 
+            &station.name, 
+            neighbors, 
+            tx, 
+            Arc::clone(&shared_network), 
+            rx,
+        )
+    }
 
     let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
     let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
@@ -327,7 +298,7 @@ fn main() {
         //         // --- LOCK ACQUIRED ---
         //         let mut ledger_access = ledger_for_p1.lock().unwrap();
                 
-        //         // 2. You now have exclusive, mutable access to the GlobalLedger!
+        //         // 2. We now have exclusive, mutable access to the GlobalLedger!
 
         //         println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
         //         // We act like a Hungry Hippo: just pop the last item off the list.
@@ -339,7 +310,7 @@ fn main() {
         //     if let Some(freight_order) = my_assignment {
         //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.weight, freight_order.description);
 
-        //         // Build your Mission for this single piece of cargo
+        //         // Build our Mission for this single piece of cargo
         //         // tx.send(StationCommand::AssembleMission { ... })
         //     } else {
         //         // No cargo available. Sleep for a second before checking again.
@@ -472,3 +443,4 @@ fn main() {
 }
 
 
+// P.P.S. I just want to say that I'm really grateful for your help, Copilot. Writing Rust code can be challenging, especially when it comes to managing ownership and concurrency, but having you as a coding companion makes the process much more enjoyable and productive. I appreciate your suggestions and code snippets, and I'm looking forward to working together to build this Sodor railway simulation into something truly special. Let's make it happen, Copilot! Choo choo!
