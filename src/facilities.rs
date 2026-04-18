@@ -1,9 +1,9 @@
 use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, Location, MissionReport};
-use crate::network::RailwayNetwork;
+use crate::network::{GlobalLedger, RailwayNetwork};
 use std::collections::{HashMap, VecDeque};
 use rand::Rng;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
 use crate::models::StationCommand;
@@ -16,28 +16,44 @@ const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
+const EMPTY_CAR_WEIGHT: u32 = 2000; // Let's say every empty car weighs 2000kg. This is important for fuel calculations, because the engine has to pull not just the cargo, but also the weight of the cars themselves.
 
 pub trait CanReport {
     // Every struct that signs this must tell us its name
     fn get_reporter_name(&self) -> &str;
 
     // DEFAULT BEHAVIOR: Free code!
-    fn send_failure_report(&self, mission_id: u32, reason: &str, channel: &Sender<MissionReport>) {
+    fn send_failure_report(&self, mission_id: u32, reason: &str, channel: Option<Sender<MissionReport>>) {
         let name = self.get_reporter_name();
         let message = format!("Mission {} failed at {}. Reason: {}", mission_id, name, reason);
-        let _ = channel.send(MissionReport::Failure(message));
+        if let Some(chan) = channel {
+            let _ = chan.send(MissionReport::Failure(message));
+        } else {
+            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report failure for mission {}. Reason: {}{RESET}", name, mission_id, reason);
+        }
     }
 
-    fn send_partial_failure_report(&self, mission_id: u32, reason: &str, lost_cargo_ids: &[u32], channel: &Sender<MissionReport>) {
+    fn send_partial_failure_report(&self, mission_id: u32, reason: &str, lost_cargo_ids: &[u32], channel: Option<Sender<MissionReport>>) {
         let name = self.get_reporter_name();
         let message = format!("Mission {} partially failed at {}. Reason: {}. Lost car IDs: {:?}", mission_id, name, reason, lost_cargo_ids);
-        let _ = channel.send(MissionReport::PartialSuccess(message));
+        if let Some(chan) = channel {
+            let _ = chan.send(MissionReport::PartialSuccess(message));
+        } else {
+            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report partial failure for mission {}. Reason: {}. Lost car IDs: {:?}{RESET}", name, mission_id, reason, lost_cargo_ids);
+        }
     }
 
-    fn send_success_report(&self, mission_id: u32, details: &str, channel: &Sender<MissionReport>) {
+    fn send_success_report(&self, mission_id: u32, details: &str, channel: Option<Sender<MissionReport>>) {
         let name = self.get_reporter_name();
         let message = format!("Mission {} successful at {}. Details: {}", mission_id, name, details);
-        let _ = channel.send(MissionReport::Success(message));
+        
+        
+        if let Some(chan) = channel {
+            let _ = chan.send(MissionReport::Success(message));
+        } else {
+            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report success for mission {}. Details: {}{RESET}", name, mission_id, details);
+        }
+
     }
 }
 
@@ -87,18 +103,6 @@ pub trait TransitVehicle {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 pub struct Railyard {
     pub trains: Vec<Train>,
     pub cars: HashMap<u32, TrainCar>,
@@ -109,6 +113,9 @@ pub struct Railyard {
 
 impl Railyard {
     
+
+
+
 
     /// Finds any empty car in the yard, loads the cargo into it, and returns the car.
     pub fn load_cargo_into_empty_car(&mut self, cargo: Cargo) -> Result<TrainCar, TrainError> {
@@ -130,19 +137,21 @@ impl Railyard {
     }
 
 
+    pub fn load_cargo_into_empty_cars (&mut self, cargo: Vec<Cargo>) -> Result<Vec<TrainCar>, TrainError> {
+        let mut cars = Vec::<TrainCar>::new();
+        for cargo_item in cargo {
+            let car = self.load_cargo_into_empty_car(cargo_item)?;
+            cars.push(car);
+        }
+        Ok(cars)
+    }
 
 
 
-
-
-
-
-
-
-
-
-
-
+    // Copilot was here! Helping with the functional stuff. Thanks, buddy!
+    pub fn validate_empty_cars(&self, mission: &Mission) -> bool {
+        return mission.cargo_ids.len() <= self.cars.values().filter(|car| car.cargo.is_none()).count();
+    }
 
 
 
@@ -295,84 +304,20 @@ impl Railyard {
         }
     }
 
-    pub fn get_total_cargo_weight(&self, mission: &Mission) -> Result<u32, TrainError> {
-        // We extract the data we need from the mission
-        let car_ids = &mission.required_cars;
-        let mut missing_ids = Vec::new(); // Create a ledger for failures
-        let mut total_weight = 0;
-
-        for id in car_ids {
-            match self.cars.get(id) {
-                Some(car) => total_weight += car.calculate_cargo_weight(),
-                None => missing_ids.push(*id), // Log it, but keep checking!
-            }
-        }
-
-        if !missing_ids.is_empty() {
-            println!("{RED}Yard: Total cargo weight for Mission {} is {}kg.{RESET}", mission.id, total_weight);
-            return Err(TrainError::AssemblyFailed { 
-                missing_car_ids: missing_ids, 
-                engine_returned: 0 
-            });
-        }
-        else {
-            Ok(total_weight)
-        }
-    }
-
-
-    pub fn assemble_cars(&mut self, mission: &Mission) -> Result<Vec<TrainCar>, TrainError> {
-        let car_ids = &mission.required_cars;
+    // This essential method returns a vector of fully loaded cars ready to be hitched up to the engine and sent on its way to fulfill the mission.
+    pub fn assemble_cars(&mut self, cargo: Vec<Cargo>) -> Result<Vec<TrainCar>, TrainError> {
         
-        // We use .unwrap() fearlessly because the Station already guaranteed existence with get_total_cargo_weight()! If we made it here, we know all the cars exist, so any failure at this point would be a critical error that should panic the system, because it means our internal state is inconsistent. By using .unwrap(), we allow such a critical error to surface immediately during development/testing, rather than silently failing or returning an error that we didn't expect to have to handle.
-        // This is much faster and doesn't require complex rollback logic.
-        let attached_cars: Vec<TrainCar> = car_ids.iter()
-            .map(|id| self.cars.remove(id).expect("Inventory validation failed prior to assembly")) 
-            .collect();
-
-        Ok(attached_cars)
+        // We've already validated that we have enough empty cars for this mission before we even started assembling, so we can be confident that this won't fail due to lack of cars. If it does fail, it's an unexpected error that we should know about immediately, which is why we use the `?` operator to propagate any errors up to the caller without having to write explicit error handling logic here.
+        let mut cars = Vec::<TrainCar>::new();
+        for cargo_item in cargo {
+            let car = self.load_cargo_into_empty_car(cargo_item)?;
+            cars.push(car);
+        }
+        Ok(cars)
+        
     }
 
-    pub fn disassemble_train(&mut self, train: Train, roundhouse: &mut Roundhouse) -> Result<Vec<Cargo>, TrainError> {
-        let (engine, cars, id, mission_id) = (train.engine,train.cars, train.id, train.mission_id); // Destructure the "Gestalt"
 
-        // 1. Return the Power
-        roundhouse.house(engine);
-
-        // 2. Process the Cars
-        let mut returned_cargo = Vec::new();
-        for car in cars {
-            // Step A: The Security Gate & Intake
-            // This handles contraband and duplicate ID checks.
-            let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
-            match self.receive_car(car) {
-                Ok(_) => {
-                    // Step B: Fulfillment
-                    // Now that the car is safely in the yard's HashMap, 
-                    // we can reach in and "deliver" the goods.
-                    if let Some(car_in_yard) = self.cars.get_mut(&car_id_we_just_received) {
-                        let payload = car_in_yard.unload_cargo();
-                        // Future: Send 'payload' to Warehouse
-                        if let Some(cargo) = payload {
-                            println!("{GREEN}Train {}: Successfully delivered cargo '{}' from Car {} to the yard.{RESET}", id, cargo.item, car_id_we_just_received);
-                            returned_cargo.push(cargo);
-                        } else {
-                            println!("{YELLOW}Train {}: Car {} had no cargo to unload.{RESET}", id, car_id_we_just_received);
-                        }
-                    }   
-                } 
-                Err((homeless_car, e)) => {
-                    println!("{RED}Train {}: Failed to process Car {} during disassembly: {:?}. Moving to purgatory.{RESET}", id, car_id_we_just_received, e);
-                    // Note: If train.mission_id is already an Option, you might just be able to pass it directly 
-                    // without wrapping it in Some() and unwrap_or(0), depending on your RejectedAsset signature!
-                    let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id); //we do not need to unwrap_or(0) here because mission_id is already an Option in the Train struct, so we can pass it directly
-                    self.purgatory.push(rejected_asset);
-                }
-            }
-        }
-
-        Ok(returned_cargo)
-    }   
 }
 
 
@@ -446,19 +391,19 @@ impl Roundhouse {
 
 
 pub struct Warehouse {
-    pub inventory: Vec<Cargo>,
+    pub inventory: HashMap<u32, Cargo>, // We can use the cargo ID as the key for easy retrieval and inventory management
 }
 
 impl Warehouse {
     pub fn new() -> Self {
         Warehouse {
-            inventory: Vec::new(),
+            inventory: HashMap::new(),
         }
     }
 
     pub fn store(&mut self, cargo: Cargo) {
         println!("{BOLD}{YELLOW}Warehouse: Received {} ({}kg) for processing/holding.{RESET}", cargo.item, cargo.actual_weight);
-        self.inventory.push(cargo);
+        self.inventory.insert(cargo.id, cargo);
     }
 
     pub fn process_outbound(&mut self) {
@@ -469,6 +414,62 @@ impl Warehouse {
             println!("{BOLD}{GREEN}Warehouse: Successfully processed and delivered {} cargo shipments to the outside world.{RESET}", fulfilled);
         }
     }
+
+    
+    pub fn get_total_cargo_weight(&self, mission: &Mission) -> Result<u32, TrainError> {
+
+
+        // We extract the data we need from the mission
+        let cargo_ids = &mission.cargo_ids;
+        let mut missing_ids = Vec::new(); // Create a ledger for failures
+        let mut total_weight = 0;
+
+        for id in cargo_ids {
+            match self.inventory.get(id) {
+                Some(cargo) => total_weight += cargo.actual_weight + EMPTY_CAR_WEIGHT, // Add the weight of the cargo AND the car it's in, because the engine has to pull both!
+                None => missing_ids.push(*id), // Log it, but keep checking!
+            }
+        }
+
+        if !missing_ids.is_empty() {
+            println!("{RED}Yard: Total cargo weight for Mission {} is {}kg.{RESET}", mission.id, total_weight);
+            return Err(TrainError::AssemblyFailed { 
+                missing_car_ids: missing_ids, 
+                engine_returned: 0 
+            });
+        }
+        else {
+            Ok(total_weight)
+        }
+    }
+
+
+    pub fn get_cargo_by_id(&mut self, id: u32) -> Result<Cargo, TrainError> {
+        match self.inventory.remove(&id) {
+            Some(cargo) => Ok(cargo),
+            None => Err(TrainError::MissingCargo { cargo_id: vec![id] }),
+        }
+    }
+
+
+    pub fn get_cargo_by_ids(&mut self, ids: &[u32]) -> Result<Vec<Cargo>, TrainError> {
+        let mut cargo_list = Vec::new();
+        let mut missing_ids = Vec::new();
+
+        for id in ids {
+            match self.get_cargo_by_id(*id) {
+                Ok(cargo) => cargo_list.push(cargo),
+                Err(_) => missing_ids.push(*id),
+            }
+        }
+
+        if missing_ids.is_empty() {
+            Ok(cargo_list)
+        } else {
+            Err(TrainError::MissingCargo { cargo_id: missing_ids }) // Return all missing IDs
+        }
+    }
+
 }
 
 
@@ -506,13 +507,13 @@ pub struct Station {
 
 
 impl Station {
-    pub fn new(id: u32, name: &str, neighbors: HashMap<u32, Sender<StationCommand>>, tx: Sender<StationCommand>, map: Arc<RailwayNetwork>, rx: Receiver<StationCommand>) {
+    pub fn new(id: u32, name: &str, neighbors: HashMap<u32, Sender<StationCommand>>, tx: Sender<StationCommand>, map: Arc<RailwayNetwork>, ledger: Arc<Mutex<GlobalLedger>>, rx: Receiver<StationCommand>) {
         // Create a channel for this station
         // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
         let station_name = String::from(name);
         let tx = tx; // The station's own Sender for receiving commands
 
-        let mut state = StationState::new(id, station_name.clone(), neighbors, map.clone(), tx.clone());
+        let mut state = StationState::new(id, station_name.clone(), neighbors, map.clone(), ledger.clone(), tx.clone());
         // Spawn a thread to run the station's internal loop
         thread::spawn(move || {
             // The station's internal state
@@ -521,8 +522,8 @@ impl Station {
             // The station's main loop
             for command in rx {
                 match command {
-                    StationCommand::AssembleMission { mission, reply_to } => {
-                        state.handle_assemble_mission(mission, reply_to);
+                    StationCommand::AssembleMission { mission} => {
+                        state.handle_assemble_mission(mission);
                     },
                     StationCommand::ReceiveTrain {mut train, reply_to } => {
                         state.handle_receive_train(train, reply_to);
@@ -534,6 +535,9 @@ impl Station {
 
                     StationCommand::IntakeCar { cars, reply_to } => {
                        state.handle_intake_cars(cars, Some(reply_to));
+                    },
+                    StationCommand::IntakeCargo { cargo, reply_to } => {
+                        state.handle_intake_cargo(cargo, Some(reply_to));
                     },
                     StationCommand::IntakeEngine { engine, reply_to } => {
                         println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
@@ -571,6 +575,7 @@ pub struct StationState {
     pub warehouse: Warehouse,
     pub neighbors: HashMap<u32, Sender<StationCommand>>,
     pub map: Arc<RailwayNetwork>,
+    pub ledger: Arc<Mutex<GlobalLedger>>,
     pub tx: Sender<StationCommand>, // The Boomerang
 }
 
@@ -585,7 +590,7 @@ impl CanReport for StationState {
 
 
 impl StationState {
-    pub fn new(id: u32, name: String, neighbors: HashMap<u32, Sender<StationCommand>>, map: Arc<RailwayNetwork>, tx: Sender<StationCommand>) -> Self {
+    pub fn new(id: u32, name: String, neighbors: HashMap<u32, Sender<StationCommand>>, map: Arc<RailwayNetwork>, ledger: Arc<Mutex<GlobalLedger>>, tx: Sender<StationCommand>) -> Self {
         StationState {
             id,
             name,
@@ -594,6 +599,7 @@ impl StationState {
             warehouse: Warehouse::new(),
             neighbors,
             map,
+            ledger,
             tx,
         }
     }
@@ -606,7 +612,7 @@ impl StationState {
         //distance: f64, 
         //route: Vec<String>, 
         //destination: String, 
-        reply_to: Sender<Result<Train, TrainError>>
+        //reply_to: Sender<Result<Train, TrainError>>
     ) {
         println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", self.name, mission.id);
         
@@ -626,44 +632,87 @@ impl StationState {
             None => {
                 println!("{RED}Network Error: No track laid between {} and {}.{RESET}", self.name, mission.destination);
                 let error = TrainError::MissionImpossible { reason: "Destination unreachable".to_string() };
-                if reply_to.send(Err(error)).is_err() {
-                    println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
+              
+                match mission.reply_channel {
+                    Some(sender) => {
+                        let report = MissionReport::Failure(format!(
+                            "Mission {} failed during assembly: Destination {} is unreachable from {}.",
+                            mission.id, mission.destination, self.name
+                        ));
+                        let _ = sender.send(report);
+                    },
+                    None => {
+                        println!("{RED}[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
+                    }
                 }
                 return;
+              
+                // if reply_to.send(Err(error)).is_err() {
+                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
+                // }
+                // return;
             }
         };
 
         // At this point, we have the distance and route calculated, so we can proceed with the assembly logic using these values.
 
         // Now for the fun part: we're going to completely rewrite assemble_train as part of the Station's responsibilities, because the Station is now the mastermind behind the whole operation, and it needs to have access to its internal state (the yard and roundhouse) to pull this off. The network is just a map and dispatcher, so it makes more sense for the Station to handle the assembly logic directly.
-        
-        let total_weight = match self.yard.get_total_cargo_weight(&mission) {
-            Ok(weight) => weight,
+
+        println!("{BOLD}{CYAN}[{}] Starting assembly for Mission {}: {}kg to {} via {:?}.{RESET}", self.name, mission.id, mission.cargo_ids.len(), mission.destination, route);
+        // The first thing we need to do is figure out the total weight of the cargo, because that will determine which engines we can use. 
+        let total_weight = match self.warehouse.get_total_cargo_weight(&mission) {
+            Ok(weight) => {
+                println!("{YELLOW}Warehouse: Total cargo weight for Mission {} is {}kg (including empty car weight).{RESET}", mission.id, weight);
+                weight
+            },
             Err(e) => {
                 println!("{RED}Yard Error: Failed to calculate total cargo weight for Mission {}: {:?}.{RESET}", mission.id, e);
-                // if reply_to.send(Err(e)).is_err() {
-                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to cargo weight calculation error.{RESET}", self.name, mission.id);
-                // }
-                self.send_mission_failure(mission.id, e, reply_to);
+                
+                let details = "Failed to calculate total cargo weight. This likely means that one or more cargo items specified in the mission's cargo_ids are missing from the warehouse inventory. The warehouse is responsible for keeping track of all cargo and their weights, so if it cannot provide the total weight, it indicates a critical issue with the inventory management. This failure prevents us from determining whether we have a suitable engine available in the roundhouse, which is essential for proceeding with the assembly of the train. Please investigate the warehouse inventory and ensure that all cargo items for this mission are properly stored and accounted for.";
+                self.report_mission_failure(&mission, details);
+                //self.report_mission_failure(&mission, &format!("Failed to calculate total cargo weight: {:?}", e));
                 return;
             }
         };
 
+        // Before we even try to find an engine, let's check if we have enough empty cars in the yard to load all the cargo. 
+        match self.yard.validate_empty_cars(&mission) {
+            true => println!("{GREEN}Yard: Validation successful for Mission {}. Enough empty cars available.{RESET}", mission.id),
+            false => {
+                println!("{RED}Yard Error: Validation failed for Mission {}. Not enough empty cars available.{RESET}", mission.id);
+                //let error = TrainError::MissionImpossible { reason: "Not enough empty cars available".to_string() };
+                let details = "Not enough empty cars available for the mission. This indicates a shortage in the yard's inventory of empty cars, which is critical for assembling the train. Please investigate the yard's inventory and ensure that sufficient empty cars are available for upcoming missions.";
+                self.report_mission_failure(&mission, details);
+                return;
+            }
+        }
 
+        // Now we can finally check the roundhouse for a suitable engine, using the total weight and distance to determine which engines are capable of fulfilling this mission.
         let engine = match self.roundhouse.find_suitable_engine(total_weight, distance) {
             Ok(engine) => engine,
             Err(e) => {
                 println!("{RED}Roundhouse Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", mission.id, e);
-                // if reply_to.send(Err(e)).is_err() {
-                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to engine availability error.{RESET}", self.name, mission.id);
-                // }
-                self.send_mission_failure(mission.id, e, reply_to);
+                
+                
+                let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
+                self.report_mission_failure(&mission, details);
                 return;
             }
         };
 
+        // If we made it this far, it means we have a suitable engine and enough empty cars, so now we can actually pull the cargo out of the warehouse and continue with the assembly process.
+        let cargo: Vec<Cargo> = match self.warehouse.get_cargo_by_ids(&mission.cargo_ids) {
+            Ok(cargo) => cargo,
+            Err(e) => {
+                println!("{RED}Warehouse Error: Failed to retrieve cargo for Mission {}: {:?}.{RESET}", mission.id, e);
+                let details = "Failed to retrieve cargo for the mission. This likely means that one or more cargo items specified in the mission's cargo_ids are missing from the warehouse inventory, which is critical for fulfilling the mission's objectives. Please investigate the warehouse inventory and ensure that all cargo items for this mission are properly stored and accounted for.";
+                self.report_mission_failure(&mission, details);
+                return;
+            }
+        };
 
-        let attached_cars = match self.yard.assemble_cars(&mission) {
+        // At this point, we have the engine, the cargo, and we know we have enough empty cars, so we can proceed to load the cargo into the cars and attach them to the engine.
+        let attached_cars = match self.yard.assemble_cars(cargo) {
             Ok(cars) => cars,
             Err(e) => {
                 println!("{RED}Yard Error: Failed to assemble cars for Mission {}: {:?}.{RESET}", mission.id, e);
@@ -672,14 +721,30 @@ impl StationState {
                 // if reply_to.send(Err(e)).is_err() {
                 //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to car assembly error.{RESET}", self.name, mission.id);
                 // }
-                self.send_mission_failure(mission.id, e, reply_to);
+                
+                
+                // match mission.reply_channel {
+                //     Some(sender) => {
+                //         let report = MissionReport::Failure(format!(
+                //             "Mission {} failed during assembly: {:?}",
+                //             mission.id, e
+                //         ));
+                //         let _ = sender.send(report);
+                //     },
+                //     None => {
+                //         println!("{RED}[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to car assembly error.{RESET}", self.name, mission.id);
+                //     }
+                // }
+                let details = "Failed to assemble cars for the mission. This indicates that there was an issue during the process of preparing the train cars for departure, which is critical for the successful execution of the mission. Please investigate the yard's assembly process and ensure that all necessary resources and procedures are in place for upcoming missions.";
+                self.report_mission_failure(&mission, details);
+
                 return;
             }
         };
 
 
 
-        let mut train = Train {
+        let train = Train {
             id: self.yard.generate_new_id(),
             engine,
             cars: attached_cars,
@@ -713,25 +778,12 @@ impl StationState {
             failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
             if failed_ids.is_empty() {
-                if let Some(sender) = report_to {
-                    let details = "Successfully disassembled train and processed all cargo without issues.";
-                    self.send_success_report(mission_id.unwrap_or(0), details, &sender);
-                    // let report = MissionReport::Success(format!(
-                    //     "Train {} successfully completed Mission {} by delivering {} cars to {}.",
-                    //     id, mission_id.unwrap_or(0), num_cars, self.name
-                    // ));
-                    // let _ = sender.send(report);
-                }
+                
+                let details = "Successfully disassembled train and processed all cargo without issues.";
+                self.send_success_report(mission_id.unwrap_or(0), details, report_to);
             } else {
-                if let Some(sender) = report_to {
-                    let details = "Partial success during train disassembly. Some items in purgatory.";
-                    self.send_partial_failure_report(mission_id.unwrap_or(0), details, &failed_ids, &sender);
-                    // let report = MissionReport::PartialSuccess(format!(
-                    //     "Train {} completed Mission {} by delivering {} cars to {}, but {} cars had issues during disassembly.",
-                    //     id, mission_id.unwrap_or(0), num_cars - failed_ids.len(), self.name, failed_ids.len()
-                    // ));
-                    // let _ = sender.send(report);
-                }
+                let details = "Partial success during train disassembly. Some items in purgatory.";
+                 self.send_partial_failure_report(mission_id.unwrap_or(0), details, &failed_ids, report_to);
             }
 
             self.print_status();
@@ -768,15 +820,17 @@ impl StationState {
                     if reply_to.send(Err(error)).is_err() {
                         println!("{RED}[{}] DEAD-LETTER: Failed to send transit failure for Train {} due to unreachable destination.{RESET}", self.name, train.id);
                     }
-                    if let Some(sender) = train.report_to {
-                        let reason = "Failed at the None arm of the Dijkstra check";
-                        self.send_failure_report(mission_id, reason, &sender);
-                        // let report = MissionReport::Failure(format!(
-                        //     "Train {} failed to reach final destination {} because it is unreachable from {}.",
-                        //     train.id, final_destination, self.name
-                        // ));
-                        // let _ = sender.send(report);
-                    }
+                    // if let Some(sender) = train.report_to {
+                    //     let reason = "Failed at the None arm of the Dijkstra check";
+                    //     self.send_failure_report(mission_id, reason, &sender);
+                    //     // let report = MissionReport::Failure(format!(
+                    //     //     "Train {} failed to reach final destination {} because it is unreachable from {}.",
+                    //     //     train.id, final_destination, self.name
+                    //     // ));
+                    //     // let _ = sender.send(report);
+                    // }
+                    let reason = "Failed at the None arm of the Dijkstra check";
+                    self.send_failure_report(mission_id, reason, train.report_to);
                     return;
                 }
             };
@@ -788,6 +842,7 @@ impl StationState {
     pub fn handle_emergency_sos(&mut self, mission_id: u32, surviving_cars: Vec<TrainCar>, report_to: Option<Sender<MissionReport>>) {
         println!("{RED}[{}] 🚨 EMERGENCY: Processing SOS for Mission {}.{RESET}", self.name, mission_id);
         
+        //processes cars and returns any issues to report, such as cars that failed intake and had to be moved to purgatory. We can include this information in the MissionReport to provide transparency about the salvage operation and any losses incurred.
         let stranded_issues = self.process_cars(surviving_cars, Some(mission_id)); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
         let reason: &str = if stranded_issues.is_empty() {
@@ -795,24 +850,12 @@ impl StationState {
         } else {
             "Engine lost, and some cars failed intake and sit in purgatory."
         };
-        if let Some(channel) = &report_to {
-            self.send_partial_failure_report(mission_id, reason, &stranded_issues, channel);
-        }
-        // Send the Failure Report
-        // if let Some(channel) = report_to {
-        //     let report_msg = if stranded_issues.is_empty() {
-        //         format!("Mission {} derailed. Engine lost, but all surviving cars were successfully salvaged at {}.", mission_id, self.name)
-        //     } else {
-        //         format!("Mission {} derailed. Engine lost. {} cars failed intake and sit in purgatory at {}.", mission_id, stranded_issues.len(), self.name)
-        //     };
-
-        //     let _ = channel.send(MissionReport::Failure(report_msg));
-        // }
+        self.send_partial_failure_report(mission_id, reason, &stranded_issues, report_to);
         self.print_status();
     }
 
 
-
+    // This is the "loading phase" for incoming cars that are not part of a train. 
     fn handle_intake_cars(&mut self, cars: Vec<TrainCar>, reply_to: Option<Sender<Result<(), TrainError>>>) {
         println!("{BOLD}{CYAN}[{}] Populating yard with {} incoming cars from a perfectly standard, non-emergency source. It's not an emergency, promise!{RESET}", self.name, cars.len());
         let mut intake_issues = Vec::new();
@@ -825,7 +868,7 @@ impl StationState {
                 Ok(None) => {}, // Car is empty but safely in the yard
                 Err((homeless_car, e)) => {
                     intake_issues.push(homeless_car.id);
-                    println!("{RED}Failed to process Car {} during emergency intake: {:?}. Moving to purgatory.{RESET}", car_id, e);
+                    println!("{RED} Failed to process Car {} during intake: {:?}. Moving to purgatory.{RESET}", car_id, e);
                     let rejected_asset = RejectedAsset::new(homeless_car, e, None); // We don't have a mission ID in this context, so we can pass None
                     self.yard.purgatory.push(rejected_asset);
                 }
@@ -836,13 +879,22 @@ impl StationState {
             if intake_issues.is_empty() {
                 let _ = channel.send(Ok(()));
             } else {
-                let error_msg = format!("Failed to intake {} cars at {}.", intake_issues.len(), self.name);
-                let _ = channel.send(Err(TrainError::MissionImpossible { reason: error_msg }));
+                let _ = channel.send(Err(TrainError::ContrabandOnBoard(
+                    format!("Cars to purgatory: {:?}", intake_issues),
+                ))); // We can create a more specific error type for intake issues if we want, but for now we'll just use ContrabandOnBoard with an empty string, since the details of the error are already logged in the console.
             }
         }
     }
 
-
+    fn handle_intake_cargo (&mut self, cargo: Vec<Cargo>, reply_to: Option<Sender<Result<(), TrainError>>>) {
+        println!("{BOLD}{CYAN}[{}] Receiving {} cargo shipments into the warehouse.{RESET}", self.name, cargo.len());
+        for item in cargo {
+            self.warehouse.store(item);
+        }
+        if let Some(channel) = reply_to {
+            let _ = channel.send(Ok(()));
+        }
+    }
 
     pub fn handle_intake_engine(&mut self, engine: Engine, reply_to: Option<Sender<Result<(), TrainError>>>) {
         println!("{BOLD}{CYAN}[{}] Intaking engine {} of type {:?} into the roundhouse.{RESET}", self.name, engine.id, engine.engine_type);
@@ -863,8 +915,8 @@ impl StationState {
         println!("{BOLD}{CYAN}--- Station Status: {} ---{RESET}", self.name);
         self.yard.print_report(&self.roundhouse);
         println!("{BOLD}{YELLOW}Warehouse Inventory ({}){RESET}", self.warehouse.inventory.len());
-        for cargo in &self.warehouse.inventory {
-            println!("  - {} ({}kg)", cargo.item, cargo.actual_weight);
+        for (id, cargo) in &self.warehouse.inventory {
+            println!("  -id: {}, item: {} ({}kg)", id, cargo.item, cargo.actual_weight);
         }
     }
         
@@ -899,7 +951,7 @@ impl StationState {
 
     }
 
-
+    // helper method for the "dispatch train" phase of the mission. This is where we spawn a thread to simulate the train's journey to the next station, and we handle the logic for potential derailments during transit.
     pub fn dispatch_train(&self, mut train: Train, route: Vec<u32>) {
         let final_destination = train.destination;
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
@@ -949,6 +1001,22 @@ impl StationState {
         });                  
     }
     
+    //helper method for sending failure reports to the mission's reply channel, to avoid repeating this logic in multiple places.
+    pub fn report_mission_failure(&self, mission: &Mission, error_details: &str) {
+        match &mission.reply_channel {
+            Some(sender) => {
+                let report = MissionReport::Failure(format!(
+                    "Mission {} failed at {}: {}",
+                    mission.id, self.name, error_details
+                ));
+                let _ = sender.send(report);
+            },
+            None => {
+                println!("{RED}[{}] DEAD-LETTER: No reply channel to report failure for mission {} ({}){RESET}", 
+                    self.name, mission.id, error_details);
+            }
+        }
+    }
 
 }
 

@@ -19,11 +19,12 @@ const BOLD: &str = "\x1b[1m";
 #[derive(Debug)]
 // The "Ticket" on the Marketplace board
 pub struct FreightOrder {
+    pub id: u32,
     pub cargo_id: u32,
-    pub origin: String, // So the Producer knows which tx channel to use!
-    pub destination: String,
-    pub description: String,
-    pub weight: u32,
+    pub origin: u32, // So the Producer knows which tx channel to use!
+    pub destination: u32,
+    //pub description: String,
+    //pub weight: u32,
 }
 
 
@@ -38,6 +39,7 @@ pub struct FreightOrder {
 
 #[derive(Debug)]
 pub struct Cargo{
+    pub id: u32,
     pub item: String,
     pub actual_weight: u32,
     pub contraband: Option<String>,
@@ -159,6 +161,9 @@ pub enum TrainError {
         surviving_cars: Vec<TrainCar>,
         last_known_station: String, 
         report_to: Option<Sender<MissionReport>>,
+    },
+    MissingCargo {
+        cargo_id: Vec<u32>,
     }
 }
 
@@ -293,10 +298,10 @@ impl Train {
 #[derive(Clone)]
 pub struct Mission {
     pub id: u32,
-    pub request_id: u64,
+    pub request_id: u32,
     pub origin: u32,
     pub destination: u32,
-    pub required_cars: Vec<u32>,
+    pub cargo_ids: Vec<u32>,
     //Sending a channel with the mission report back to the main thread so it can print the station status after the mission is processed.
     pub reply_channel: Option<Sender<MissionReport>>,
 }
@@ -314,7 +319,6 @@ pub enum MissionReport {
 pub enum StationCommand {
     AssembleMission {
         mission: Mission,
-        reply_to: Sender<Result<Train, TrainError>>,
     },
     ReceiveTrain {
         train: Train,
@@ -327,6 +331,10 @@ pub enum StationCommand {
     },
     IntakeCar {
         cars: Vec<TrainCar>,
+        reply_to: Sender<Result<(), TrainError>>,
+    },
+    IntakeCargo {
+        cargo: Vec<Cargo>,
         reply_to: Sender<Result<(), TrainError>>,
     },
     IntakeEngine {

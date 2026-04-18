@@ -94,7 +94,7 @@ fn main() {
 
 
 
-    
+
 
     // Copilot, wanna try making build_neighbors more functional? Maybe we can use iterators and maps instead of a for loop and mutable HashMap? Let's see if we can make it more concise and elegant while still being clear and efficient. What do you think, Copilot? Can you help me refactor this code to be more functional? Let's give it a shot! Choo choo!
     // NEW AND IMPROVED: A more functional approach to building the neighbors HashMap for each station! Instead of using a mutable HashMap and a for loop, we can use iterators and the filter_map method to create the neighbors HashMap in a more concise and elegant way. This approach is more in line with Rust's functional programming style and can be easier to read once you're familiar with the iterator methods. Let's see how it looks!
@@ -121,21 +121,21 @@ fn main() {
 
 
 
-    // At this point, we have created the stations and laid the tracks on the network, but we haven't yet built the neighbor HashMaps for each station. The stations need to know who their neighbors are so they can send commands to them, but we can't build those HashMaps until we've laid the tracks, because the tracks are what define the neighbor relationships between the stations.
-    // Now that we have the tracks in place, we can look at the network's internal data structures to see which stations are connected to which, and use that information to populate the neighbor HashMaps for each station before we spawn their threads.
-    let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
-        let mut local_neighbors = HashMap::new();
+    // // At this point, we have created the stations and laid the tracks on the network, but we haven't yet built the neighbor HashMaps for each station. The stations need to know who their neighbors are so they can send commands to them, but we can't build those HashMaps until we've laid the tracks, because the tracks are what define the neighbor relationships between the stations.
+    // // Now that we have the tracks in place, we can look at the network's internal data structures to see which stations are connected to which, and use that information to populate the neighbor HashMaps for each station before we spawn their threads.
+    // let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
+    //     let mut local_neighbors = HashMap::new();
         
-        // Look at the mathematical tracks we just laid
-        if let Some(destinations) = net.get_tracks(&station_id) {
-            for (neighbor_id, _distance) in destinations {
-                // Grab the radio for this specific neighbor
-                let tx = switch.get(neighbor_id).expect("Missing tx!").clone();
-                local_neighbors.insert(*neighbor_id, tx);
-            }
-        }
-        local_neighbors
-    };
+    //     // Look at the mathematical tracks we just laid
+    //     if let Some(destinations) = net.get_tracks(&station_id) {
+    //         for (neighbor_id, _distance) in destinations {
+    //             // Grab the radio for this specific neighbor
+    //             let tx = switch.get(neighbor_id).expect("Missing tx!").clone();
+    //             local_neighbors.insert(*neighbor_id, tx);
+    //         }
+    //     }
+    //     local_neighbors
+    // };
 
 
 
@@ -158,17 +158,18 @@ fn main() {
             neighbors, 
             tx, 
             Arc::clone(&shared_network), 
+            Arc::clone(&shared_ledger),
             rx,
         )
     }
 
-    let cargo1 = Cargo { item: String::from("bananas"), actual_weight: 1000, contraband: None };
-    let cargo2 = Cargo { item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
-    let cargo3 = Cargo { item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
-    let cargo4 = Cargo { item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
-    let cargo5 = Cargo { item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
-    let cargo6 = Cargo { item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
-    let cargo7 = Cargo { item: String::from("Declassified Documents"), actual_weight: 11001, contraband: Some(String::from("The Truth")) };
+    let cargo1 = Cargo { id:0, item: String::from("bananas"), actual_weight: 1000, contraband: None };
+    let cargo2 = Cargo { id:1, item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
+    let cargo3 = Cargo { id:2, item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
+    let cargo4 = Cargo { id:3, item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
+    let cargo5 = Cargo { id:4, item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
+    let cargo6 = Cargo { id:5, item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
+    let cargo7 = Cargo { id:6, item: String::from("Declassified Documents"), actual_weight: 11001, contraband: Some(String::from("The Truth")) };
 
     let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
     let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
@@ -233,21 +234,31 @@ fn main() {
 
 
     //Before creating freight orders, we make cargo
-    let foam1 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
-    let foam2 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
-    let foam3 = Cargo { item: "foam".to_string(), actual_weight: 1, contraband: None};
+    let foam1 = Cargo { id: 7, item: "foam".to_string(), actual_weight: 1, contraband: None};
+    let foam2 = Cargo { id: 8, item: "foam".to_string(), actual_weight: 1, contraband: None};
+    let foam3 = Cargo { id: 9, item: "foam".to_string(), actual_weight: 1, contraband: None};
 
-    // //now to use the foam to create some freight orders
-    // let freight_order1 = FreightOrder { cargo: foam1, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    // let freight_order2 = FreightOrder { cargo: foam2, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    // let freight_order3 = FreightOrder { cargo: foam3, origin: "Tidmouth".to_string(), destination: "Brendam Docks".to_string() };
-    // //Testing that this whole .lock() thing really works! Choo!
-    // {
-    //     let mut ledger_access = shared_ledger.lock().unwrap();
-    //     ledger_access.pending_cargo.push(freight_order1);
-    //     ledger_access.pending_cargo.push(freight_order2);
-    //     ledger_access.pending_cargo.push(freight_order3);
-    // }
+    let tidmouth_incoming_cargo = vec![foam1, foam2, foam3];
+
+    match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCargo {
+        cargo: tidmouth_incoming_cargo, 
+        reply_to: tx_reply.clone() 
+    }) {
+        Ok(_) => println!("Cargo successfully intaken by Tidmouth!"),
+        Err(e) => println!("Failed to intake cargo: {:?}", e),
+    }
+
+    //now to use the foam to create some freight orders
+    let freight_order1 = FreightOrder { id: 1, cargo_id: 7, origin: 0, destination: 1 };
+    let freight_order2 = FreightOrder { id: 2, cargo_id: 8, origin: 0, destination: 1 };
+    let freight_order3 = FreightOrder { id: 3, cargo_id: 9, origin: 0, destination: 1 };
+    //Testing that this whole .lock() thing really works! Choo!
+    {
+        let mut ledger_access = shared_ledger.lock().unwrap();
+        ledger_access.pending_cargo.push(freight_order1);
+        ledger_access.pending_cargo.push(freight_order2);
+        ledger_access.pending_cargo.push(freight_order3);
+    }
 
 
 
@@ -282,75 +293,119 @@ fn main() {
     let network_clone_1 = Arc::clone(&shared_network);
     let switchboard_clone_1 = temporary_switchboard.clone();
     let ledger_for_p1 = Arc::clone(&shared_ledger);
+
     let producer_1_handle = thread::spawn(move || {
-        println!("Producer 1: Submitting Mission 1 to the Network...");
+        println!("Producer 1 ...");
         let switchboard = switchboard_clone_1; // The producer can use the switchboard to send commands to stations
-        // 1. Wait in line for the Talking Stick
-        // let mut ledger_access = ledger_for_p1.lock().unwrap();
+        
+        // 1. Create a clipboard to hold our walkie-talkies!
+        let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
 
-        // // 3. The lock automatically drops when `ledger_access` goes out of scope!
-
-        // loop {
-        //     println!("test_loop");
-        //     // 1. Create a temporary variable to hold our assignment (if we get one)
-        //     let my_assignment: Option<FreightOrder> = {
+        
+        loop {
+            println!("test_loop");
+            // 2. Create a temporary variable to hold our assignment (if we get one)
+            let my_assignment: Option<FreightOrder> = {
+                println!("Producer 1 is waiting for the Talking Stick to check the Global Ledger for pending cargo...");
                 
-        //         // --- LOCK ACQUIRED ---
-        //         let mut ledger_access = ledger_for_p1.lock().unwrap();
+                // 3. Wait in line for the Talking Stick
+                // --- LOCK ACQUIRED ---
+                let mut ledger_access = ledger_for_p1.lock().unwrap();
                 
-        //         // 2. We now have exclusive, mutable access to the GlobalLedger!
+                // 4. We now have exclusive, mutable access to the GlobalLedger!
 
-        //         println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
-        //         // We act like a Hungry Hippo: just pop the last item off the list.
-        //         // If the list is empty, pop() returns None.
-        //         ledger_access.pending_cargo.pop() 
+                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+                // We act like a Hungry Hippo: just pop the last item off the list.
+                // If the list is empty, pop() returns None.
+                ledger_access.pending_cargo.pop() 
                 
-        //     }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
-        //     // 2. Now we are outside the lock. The ledger is free for other threads.
-        //     if let Some(freight_order) = my_assignment {
-        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.weight, freight_order.description);
+            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+            // 5. Now we are outside the lock. The ledger is free for other threads.
+            if let Some(freight_order) = my_assignment {
+                println!("Producer 1 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
 
-        //         // Build our Mission for this single piece of cargo
-        //         // tx.send(StationCommand::AssembleMission { ... })
-        //     } else {
-        //         // No cargo available. Sleep for a second before checking again.
-        //         println!("test_sleep");
-        //         thread::sleep(std::time::Duration::from_secs(1));
-        //     }
-        // }
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        println!("Producer 1: Submitting Mission 1 to the Network...");
-        //The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
-        let (tx_reply1, rx_reply1) = mpsc::channel();
-        let mission1 = Mission { 
-            id: 1, 
-            request_id: 1001,
-            origin: 0,
-            destination: 1, 
-            required_cars: vec![2, 4], 
-            reply_channel: Some(tx_reply1) 
-        };
-        // Network creates the Conductor in the background!
-        let (transit_tx, transit_rx) = mpsc::channel();
-        //network_clone_1.dispatch_train_across_network(mission1); 
-        switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission1.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
-        
-        // Wait for the final report from the Conductor
-        if let Ok(report) = rx_reply1.recv() {
-            println!("Producer 1 received report: {:?}", report);
+                let (tx_report, rx_report) = mpsc::channel();
+
+
+                // Build our Mission for this single piece of cargo
+                
+                let mission = Mission {
+                    id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
+                    request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
+                    origin: freight_order.origin,
+                    destination: freight_order.destination,
+                    cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
+                    reply_channel: Some(tx_report.clone()), // The producer's channel to receive updates about this mission
+                };
+                
+                
+                if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
+                    println!("Producer 1 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
+                    
+                    origin_tx.clone().send(StationCommand::AssembleMission { 
+                        mission, // <-- Idiomatic Rust shorthand!
+                    }).expect("Failed to send AssembleMission command over open channel");
+
+                    // // The Tiny Intern Thread!
+                    // thread::spawn(move || {
+                    //     if let Ok(report) = rx_report.recv() {
+                    //         println!("Producer 1 received report: {:?}", report);
+                    //     }
+                    // });
+
+                    active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
+
+                } else {
+                    println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
+                }
+
+            } else {
+                println!("Ledger is empty. Producer 1 clocking out.");
+                break;
+            }
+
+
         }
+        
+        
+        
+        
+        
+        
+        for rx in active_monitors {
+            if let Ok(report) = rx.recv() {
+                println!("Producer 1 received report: {:?}", report);
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        // println!("Producer 1: Submitting Mission 1 to the Network...");
+        // //The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
+        // let (tx_reply1, rx_reply1) = mpsc::channel();
+        // let mission1 = Mission { 
+        //     id: 1, 
+        //     request_id: 1001,
+        //     origin: 0,
+        //     destination: 1, 
+        //     required_cars: vec![2, 4], 
+        //     reply_channel: Some(tx_reply1) 
+        // };
+        // // Network creates the Conductor in the background!
+        // let (transit_tx, transit_rx) = mpsc::channel();
+        // //network_clone_1.dispatch_train_across_network(mission1); 
+        // switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission1.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
+        
+        // // Wait for the final report from the Conductor
+        // if let Ok(report) = rx_reply1.recv() {
+        //     println!("Producer 1 received report: {:?}", report);
+        // }
     });
 
     // 4. Spawn Producer 2
@@ -359,75 +414,112 @@ fn main() {
 
     let ledger_for_p2 = Arc::clone(&shared_ledger);
     let producer_2_handle = thread::spawn(move || {
-        // println!("Producer 2: Submitting Mission 2 to the Network...");
-        // let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
+        println!("Producer 2: ...");
+        let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
         
-        // // 1. Wait in line for the Talking Stick
-        // let mut ledger_access = ledger_for_p2.lock().unwrap();
+        // 1. Create a clipboard to hold our walkie-talkies!
+        let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
 
 
-        // // 3. The lock automatically drops when `ledger_access` goes out of scope!
-
-        // loop {
-        //     println!("test_loop_2");
-        //     // 1. Create a temporary variable to hold our assignment (if we get one)
-        //     let my_assignment: Option<FreightOrder> = {
+        loop {
+            println!("test_loop_2");
+            
+            // 2. Create a temporary variable to hold our assignment (if we get one)
+            let my_assignment: Option<FreightOrder> = {
                 
-        //         // 1. Wait in line for the Talking Stick
-        //         // --- LOCK ACQUIRED ---
-        //         let mut ledger_access = ledger_for_p2.lock().unwrap();
+                // 3. Wait in line for the Talking Stick
+                // --- LOCK ACQUIRED ---
+                let mut ledger_access = ledger_for_p2.lock().unwrap();
 
-        //         // 2. You now have exclusive, mutable access to the GlobalLedger!
-        //         println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+                // 4. We now have exclusive, mutable access to the GlobalLedger!
+                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
                 
-        //         // We act like a Hungry Hippo: just pop the last item off the list.
-        //         // If the list is empty, pop() returns None.
-        //         ledger_access.pending_cargo.pop() 
+                // We act like a Hungry Hippo: just pop the last item off the list.
+                // If the list is empty, pop() returns None.
+                ledger_access.pending_cargo.pop() 
                 
-        //     }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
 
-        //     // 2. Now we are outside the lock. The ledger is free for other threads.
-        //     if let Some(freight_order) = my_assignment {
-        //         println!("Producer claimed {}kg of {}. Building mission...", freight_order.weight, freight_order.description);
+            // 5. Now we are outside the lock. The ledger is free for other threads.
+            if let Some(freight_order) = my_assignment {
+                println!("Producer 2 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
+                
+                 let (tx_report, rx_report) = mpsc::channel();
+                // Build our Mission for this single piece of cargo
 
-        //         // Build your Mission for this single piece of cargo
-        //         // tx.send(StationCommand::AssembleMission { ... })
-        //     } else {
-        //         // No cargo available. Sleep for a second before checking again.
-        //         thread::sleep(std::time::Duration::from_secs(1));
-        //     }
-        // }
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        //Same thing for Producer 2, but with a different mission!
-        let (tx_reply2, rx_reply2) = mpsc::channel();
-        let mission2 = Mission{
-            id:2, 
-            request_id: 2002,
-            origin: 0,
-            destination: 1,
-            required_cars: vec![6],
-            reply_channel: Some(tx_reply2)
-        };
+                let mission = Mission {
+                    id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
+                    request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
+                    origin: freight_order.origin,
+                    destination: freight_order.destination,
+                    cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
+                    reply_channel: Some(tx_report.clone()), // Producer 2 doesn't care about updates for this mission, so we can set the reply channel to None. The station will still process the mission and dispatch the train, but it won't send any updates back to Producer 2.
+                };
 
-        println!("Producer 2: Submitting Mission 2 to the Network...");
+                
+                
+                if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
+                    println!("Producer 2 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
+                    
+                    origin_tx.clone().send(StationCommand::AssembleMission { 
+                        mission, // <-- Idiomatic Rust shorthand!
+                    }).expect("Failed to send AssembleMission command over open channel");
+                    
+                    // // The Tiny Intern Thread!
+                    // thread::spawn(move || {
+                    //     if let Ok(report) = rx_report.recv() {
+                    //         println!("Producer 2 received report: {:?}", report);
+                    //     }
+                    // });
 
-        let (transit_tx, transit_rx) = mpsc::channel();
-        switchwboard_clone_2.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission2.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
-        //network_clone_2.dispatch_train_across_network(mission2); 
-        
-        if let Ok(report) = rx_reply2.recv() {
-            println!("Producer 2 received report: {:?}", report);
+                    active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
+
+                } else {
+                    println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
+                }
+
+                
+
+            } else {
+                println!("Ledger is empty. Producer 2 clocking out.");
+                break;
+            }
         }
+        
+        for rx in active_monitors {
+            if let Ok(report) = rx.recv() {
+                println!("Producer 2 received report: {:?}", report);
+            }
+        }
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        // //Same thing for Producer 2, but with a different mission!
+        // let (tx_reply2, rx_reply2) = mpsc::channel();
+        // let mission2 = Mission{
+        //     id:2, 
+        //     request_id: 2002,
+        //     origin: 0,
+        //     destination: 1,
+        //     required_cars: vec![6],
+        //     reply_channel: Some(tx_reply2)
+        // };
+
+        // println!("Producer 2: Submitting Mission 2 to the Network...");
+
+        // let (transit_tx, transit_rx) = mpsc::channel();
+        // switchwboard_clone_2.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission2.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
+        // //network_clone_2.dispatch_train_across_network(mission2); 
+        
+        // if let Ok(report) = rx_reply2.recv() {
+        //     println!("Producer 2 received report: {:?}", report);
+        // }
     });
 
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
