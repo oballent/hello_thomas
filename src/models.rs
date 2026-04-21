@@ -1,5 +1,12 @@
+use std::hash::Hash;
+//use std::os::windows::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use crate::network::GlobalLedger;
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -20,12 +27,150 @@ const BOLD: &str = "\x1b[1m";
 // The "Ticket" on the Marketplace board
 pub struct FreightOrder {
     pub id: u32,
-    pub cargo_id: u32,
+    pub cargo_ids: Vec<u32>, // In a more complex system, a single freight order might involve multiple pieces of cargo that need to be shipped together. For simplicity, we can assume each freight order corresponds to one piece of cargo, but using a Vec allows for future expansion without changing the data structure.
     pub origin: u32, // So the Producer knows which tx channel to use!
     pub destination: u32,
     //pub description: String,
     //pub weight: u32,
+    pub ttl: u32, // Time to live, in iterations of the Producer's while active loop.
 }
+
+pub struct Producer {
+    pub id: u32,
+    pub ledger: Arc<Mutex<GlobalLedger>>, // The source of truth for pending cargo and active missions. 
+    pub switchboard: HashMap<u32, Sender<StationCommand>>, // Maps station IDs to their command channels
+}
+
+impl Producer {
+    pub fn new(id: u32, ledger: Arc<Mutex<GlobalLedger>>, switchboard: HashMap<u32, Sender<StationCommand>>) -> Self {
+        Producer {
+            id,
+            ledger,
+            switchboard,
+        }
+    }
+
+    pub fn start(self) -> JoinHandle<()> {
+        thread::spawn(move || {
+            println!("{CYAN}Producer {} is starting up...{RESET}", self.id);
+            // We still pull the pending cargo from the ledger, but we do it inside the thread so that we have access to the switchboard and can send commands to the stations.
+            let mut active_monitors: Vec<(Receiver<MissionReport>, FreightOrder)> = Vec::new(); // This pairs the mission report channels with their corresponding freight orders so we can keep track of which reports belong to which missions.
+            let mut active: bool = true;
+
+            while active {
+                println!("while active loop start for Producer {}", self.id);
+                // 2. Create a temporary variable to hold our assignment (if we get one)
+                let my_assignment: Option<FreightOrder> = {
+                    println!("Producer {} is waiting for the Talking Stick to check the Global Ledger for pending cargo...", self.id);
+                    
+                    // 3. Wait in line for the Talking Stick
+                    // --- LOCK ACQUIRED ---
+                    let mut ledger_access = self.ledger.lock().unwrap();
+                    
+                    // 4. We now have exclusive, mutable access to the GlobalLedger!
+
+                    println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+                    // We act like a Hungry Hippo: just pop the last item off the list.
+                    // If the list is empty, pop() returns None.
+                    ledger_access.pending_cargo.pop() 
+                    
+                }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+                // 5. Now we are outside the lock. The ledger is free for other threads.
+
+                //if we got an assignment, we send it!
+                if let Some(freight_order) = my_assignment {
+                    println!("Producer {} claimed cargo IDs {:?}. Building mission...", self.id, freight_order.cargo_ids);
+
+                    let (tx_report, rx_report) = mpsc::channel();
+
+
+                    // Build our Mission for this single piece of cargo
+                    
+                    let mission = Mission {
+                        id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
+                        request_id: (10 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
+                        origin: freight_order.origin,
+                        destination: freight_order.destination,
+                        cargo_ids: freight_order.cargo_ids.clone(), // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
+                        reply_channel: Some(tx_report.clone()), // The producer's channel to receive updates about this mission
+                    };
+                    
+                    
+                    if let Some(origin_tx) = self.switchboard.get(&freight_order.origin) {
+                        println!("Producer {} is sending mission for cargo IDs {:?} to Station {}...", self.id, freight_order.cargo_ids, freight_order.origin);
+                        
+                        origin_tx.clone().send(StationCommand::AssembleMission { 
+                            mission, // <-- Idiomatic Rust shorthand!
+                        }).expect("Failed to send AssembleMission command over open channel");
+
+                        // // The Tiny Intern Thread!
+                        // thread::spawn(move || {
+                        //     if let Ok(report) = rx_report.recv() {
+                        //         println!("Producer {} received report: {:?}", self.id, report);
+                        //     }
+                        // });
+
+                        active_monitors.push((rx_report, freight_order));// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
+
+                    } else {
+                        println!("{RED}Error: Radio channel for Station {} not found in switchboard! Reinserting freight order {:?} {RESET}", freight_order.origin, freight_order);// RE-INSERT INTO LEDGER!
+                        let mut ledger_access = self.ledger.lock().unwrap();
+                        ledger_access.pending_cargo.push(freight_order);
+                    }
+
+                }
+                
+                // 3. Now check all active missions to see if any reports came back
+                let mut still_monitoring = Vec::new();
+                for (rx, mut order) in active_monitors {
+                    match rx.try_recv() {
+                        Ok(MissionReport::Success(details)) => println!("{GREEN} Producer {} success: {}", self.id, details),
+                        Ok(MissionReport::PartialSuccess(details)) => {
+                            println!("{YELLOW} Producer {} partial success: {}", self.id, details);
+                        }
+                        Ok(MissionReport::Failure(details)) => {
+                            println!("{RED} Producer {} failure: {}", self.id, details);
+                            // Optionally, we could reinsert the freight order back into the ledger here if we want to retry it later
+                            let mut ledger_access = self.ledger.lock().unwrap();
+                            order.ttl -= 1; // Decrement the TTL for this order since it failed. 
+                            if order.ttl > 0 {
+                                ledger_access.pending_cargo.push(order);
+                            }
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {
+                            // No report yet, keep monitoring
+                            still_monitoring.push((rx, order));
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            println!("{RED} Producer {} error: Station disconnected", self.id);
+
+                        }
+                    }
+                }
+                active_monitors = still_monitoring; // Update our active monitors with the ones that are still pending
+
+                // Check the Global Ledger again to see if there are more pending cargo items to claim. If not, we can set active to false
+                let ledger_is_empty = {
+                    let ledger_access = self.ledger.lock().unwrap();
+                    ledger_access.pending_cargo.is_empty()
+                };
+
+                if ledger_is_empty && active_monitors.is_empty() {
+                    println!("Producer {} has no more pending cargo to claim and no active missions to monitor. Clocking out.", self.id);
+                    active = false;
+                } else {
+                    //sleep to avoid burning CPU cycles while waiting for Stations to report back. In a real system, we would want a more sophisticated event-driven approach rather than just sleeping, but this is fine for our simulation.
+                    thread::sleep(std::time::Duration::from_millis(500));
+                }
+
+
+            }
+        })
+    }
+}
+
+
+
 
 
 
@@ -97,12 +242,12 @@ pub enum EngineType {
 
 
 impl EngineType {
-    pub fn max_capacity(&self) -> u32 {
+    pub fn max_capacity(&self) -> f64 {
         match self {
-            EngineType::Percy => 5000,
-            EngineType::Thomas => 15000,
-            EngineType::Gordon => 50000,
-            EngineType::Diesel => 20000,
+            EngineType::Percy => 5000.0,
+            EngineType::Thomas => 15000.0,
+            EngineType::Gordon => 50000.0,
+            EngineType::Diesel => 20000.0,
         }
     }
     
@@ -180,13 +325,13 @@ pub struct Engine {
 
 impl Engine {
     /// THE SINGLE SOURCE OF TRUTH for fuel consumption math.
-    pub fn calculate_fuel_requirement(&self, weight: u32, distance: f64) -> f32 {
+    pub fn calculate_fuel_requirement(&self, weight: f64, distance: f64) -> f32 {
         let work = weight as f32 * distance as f32;
         let quotient = self.engine_type.fuel_efficiency() * 5000.0;
         work / quotient
     }
 
-    pub fn can_complete_mission(&self, weight: u32, distance: f64) -> bool {
+    pub fn can_complete_mission(&self, weight: f64, distance: f64) -> bool {
         let needed = self.calculate_fuel_requirement(weight, distance);
         
         if needed > self.current_fuel {
@@ -198,7 +343,7 @@ impl Engine {
         }
     }
 
-    pub fn burn_fuel(&mut self, weight: u32, distance: f64) -> Result<(), TrainError> {
+    pub fn burn_fuel(&mut self, weight: f64, distance: f64) -> Result<(), TrainError> {
         let needed = self.calculate_fuel_requirement(weight, distance);
         if needed > self.current_fuel {
             Err(TrainError::MissionImpossible {
@@ -228,6 +373,13 @@ impl TrainCar {
             .as_ref()
             .map(|c| c.actual_weight)
             .unwrap_or(0)
+    }
+
+    pub fn gross_weight(&self) -> u32 {
+        let tare_weight = 2000; // If cars have different weights later, make this a struct field.
+        let net_weight = self.calculate_cargo_weight();
+        
+        tare_weight + net_weight
     }
 
     /// The 'Definition of Done'. Returns the cargo, leaving the car empty.
@@ -270,7 +422,7 @@ impl Train {
         println!("Train {} is departing for ({}km)...", self.id, distance_to_next_stop);
         
         // 1. Calculate the final weight
-        let total_weight = self.calculate_cargo_weight();
+        let total_weight = self.calculate_gross_weight(); // Convert to u32 for fuel calculation. In a real system, we would want to be careful about potential overflows here and might want to use a larger integer type or a different approach to weight management.
         let speed = self.engine.engine_type.speed() as f64;
         
         // 2. The Consequence
@@ -290,6 +442,16 @@ impl Train {
                 }
             })
             .sum()
+    }
+
+    pub fn calculate_gross_weight(&self) -> f64 {
+        // Sum the gross weight of all attached cars
+        let consist_weight: u32 = self.cars.iter().map(|car| car.gross_weight()).sum();
+        
+        // If you want the Engine's mass to burn fuel too, you add it here.
+        // let engine_weight = 5000; 
+        
+        consist_weight as f64
     }
 
 }
@@ -326,6 +488,7 @@ pub enum StationCommand {
     },
     HandleEmergencySOS { 
         mission_id: u32, 
+        destination: u32,
         surviving_cars: Vec<TrainCar>, 
         report_to: Option<Sender<MissionReport>> 
     },
@@ -344,6 +507,9 @@ pub enum StationCommand {
     NewNeighbor {
         neighbor: u32,
         neighbor_tx: Sender<StationCommand>,
+    },
+    RequestEmptyCars {
+        count: u32,
     },
     PrintStatus,                   // Reporting
     Terminate,                     // Graceful Shutdown

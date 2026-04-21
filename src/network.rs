@@ -112,16 +112,22 @@ impl RailwayNetwork {
 
         // 3. Insert both directions automatically
         // We use `entry().or_insert_with()` to either get the existing vector of tracks for that station or create a new one if it doesn't exist. Then we push the new track onto that vector. This way, we maintain a complete list of all tracks connected to each station.
-        if self.tracks.contains_key(&a) && self.tracks[&a].iter().any(|(dest, _)| *dest == b) {
-            println!("{YELLOW}Network: Track already exists between {} and {}. Skipping.{RESET}", a, b);
-            return;
-        } else {
-            println!("{CYAN}Network: Laying track between {} and {} ({:.2}km){RESET}", a, b, distance);
-            self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
-            self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
+        
+        
+        // wanna clean this up a bit, Copilot? We're checking the map twice and doing some redundant work. Maybe we can just do one check and then insert if it doesn't exist?
+        
+        if let Some(neighbors) = self.tracks.get(&a) {
+            if neighbors.iter().any(|(dest, _)| *dest == b) {
+                println!("{YELLOW}Network: Track already exists between {} and {}. Skipping.{RESET}", a, b);
+                return;
+            }
         }
-
+        
+        println!("{CYAN}Network: Laying track between {} and {} ({:.2}km){RESET}", a, b, distance);
+        self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
+        self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
         println!("{CYAN}Network: Track laid between {} and {} ({:.2}km){RESET}", a, b, distance);
+        
     }
 
     // pub fn add_mission(&mut self, mission: Mission) {
@@ -192,7 +198,7 @@ impl RailwayNetwork {
                 let mut current = destination;
                 
                 while let Some(previous) = came_from.get(&current) {
-                    path.push(current.clone());
+                    path.push(current);
                     current = previous.clone();
                 }
                 path.push(origin);

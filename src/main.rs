@@ -2,7 +2,7 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::models::{Cargo, Engine, EngineType, FreightOrder, Location, Mission, MissionReport, StationCommand, TrainCar};
+use crate::models::{Producer, Cargo, Engine, EngineType, FreightOrder, Location, Mission, MissionReport, StationCommand, TrainCar};
 use crate::facilities::Station;
 use crate::network::{RailwayNetwork, GlobalLedger};
 
@@ -50,7 +50,7 @@ pub struct TrackConfig {
 
 // I AM The Fat Controller - or, at least, I would be if this were built around a Monolithic Architecture - but it's not!
 // Asynchronous and Distributed systems are the name of the game! All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
-// P.S. Copilot was here, helping me write this code! Rust is hard, but together we can do it! Let's build the best darn Sodor railway simulation the world has ever seen! Choo choo!
+// P.S. Copilot and Gemini were here, helping me write this code! Rust is hard, but together we can do it! Let's build the best darn Sodor railway simulation the world has ever seen! Choo choo!
 // Ahem, let's get this show on the rails!
 
 fn main() {
@@ -93,10 +93,7 @@ fn main() {
 
 
 
-
-
-
-    // Copilot, wanna try making build_neighbors more functional? Maybe we can use iterators and maps instead of a for loop and mutable HashMap? Let's see if we can make it more concise and elegant while still being clear and efficient. What do you think, Copilot? Can you help me refactor this code to be more functional? Let's give it a shot! Choo choo!
+    // Copilot, wanna try making build_neighbors more functional? Maybe we can use iterators and maps instead of a for loop and mutable HashMap? Let's give it a shot! Choo choo!
     // NEW AND IMPROVED: A more functional approach to building the neighbors HashMap for each station! Instead of using a mutable HashMap and a for loop, we can use iterators and the filter_map method to create the neighbors HashMap in a more concise and elegant way. This approach is more in line with Rust's functional programming style and can be easier to read once you're familiar with the iterator methods. Let's see how it looks!
 
     let build_neighbors = |station_id: u32, net: &RailwayNetwork, switch: &HashMap<u32, Sender<StationCommand>>| -> HashMap<u32, Sender<StationCommand>> {
@@ -184,15 +181,43 @@ fn main() {
 
     let engine1 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
     let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 3000.0 };
-    let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 750.0 };
-    let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 500.0 };
+    let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 1000.0 };
+    let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 750.0 };
     let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
 
-    let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5];
+    let emergency_gordon_1 = Engine { id: 6, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_2 = Engine { id: 7, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_3 = Engine { id: 8, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_4 = Engine { id: 9, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_5 = Engine { id: 10, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_6 = Engine { id: 11, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    let emergency_gordon_7 = Engine { id: 12, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+
+
+
+    let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5, emergency_gordon_7];
     // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
     let (tx_reply, rx_reply) = mpsc::channel();
     // TESTING: We can send commands to the station before it's fully integrated into the network, as long as we have its channel set up. This allows us to simulate the process of the station receiving resources and preparing for operations even before it starts handling missions from the network. It's a bit like stocking the station with supplies and engines before it starts running trains, which is a realistic part of how a station would operate in the real world.
     // match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+    
+    let brendam_docks_incoming_engines = vec![emergency_gordon_1];
+
+    let knapford_incoming_engines = vec![emergency_gordon_2];
+
+    let welsworth_incoming_engines = vec![emergency_gordon_3];
+
+    let peel_godred_incoming_engines = vec![emergency_gordon_4];
+    
+    let vicarstown_incoming_engines = vec![emergency_gordon_5];
+
+    let maron_incoming_engines = vec![emergency_gordon_6];
+    
+    
+    
+    
+    //WE ARE GOING TO COMMENT OUT OUR TRAINCAR INITIALIZATION, in order to test the functionality of request_empty_cars and the station's ability to respond to that command by creating empty cars on demand. This will allow us to verify that the station can handle requests for resources and manage its inventory of train cars correctly, which is an important part of its functionality in fulfilling missions and dispatching trains across the network. By testing this command, we can ensure that the station is properly integrated with the network and can respond to commands from producers in a dynamic and flexible way. Nice, Copilot! Let's see how the station handles the request for empty cars and make sure it can create them on demand when needed! Choo choo!
+    
     match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
         Ok(_) => println!("Car successfully intaken by Tidmouth!"),
         Err(e) => println!("Failed to intake car: {:?}", e),
@@ -205,6 +230,12 @@ fn main() {
         },
         Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
     };
+
+
+
+
+
+
 
 
 
@@ -223,13 +254,94 @@ fn main() {
         }
     });
 
+    brendam_docks_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&1).expect("Brendam Docks channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Brendam Docks!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Brendam Docks confirmed receipt of the engine."),
+                Err(e) => println!("Brendam Docks reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Brendam Docks: {:?}", e),
+        }
+    });
+
+    vicarstown_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&4).expect("Vicarstown channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Vicarstown!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Vicarstown confirmed receipt of the engine."),
+                Err(e) => println!("Vicarstown reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Vicarstown: {:?}", e),
+        }
+    });
+
+    maron_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&5).expect("Maron channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Maron!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Maron confirmed receipt of the engine."),
+                Err(e) => println!("Maron reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Maron: {:?}", e),
+        }
+    });
+    
+    welsworth_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&3).expect("Welsworth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Welsworth!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Welsworth confirmed receipt of the engine."),
+                Err(e) => println!("Welsworth reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Welsworth: {:?}", e),
+        }
+    });
+
+    peel_godred_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&2).expect("Peel Godred channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Peel Godred!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Peel Godred confirmed receipt of the engine."),
+                Err(e) => println!("Peel Godred reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Peel Godred: {:?}", e),
+        }
+    });
+
+    knapford_incoming_engines.into_iter().for_each(|engine| {
+        match temporary_switchboard.get(&6).expect("Knapford channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+            Ok(_) => println!("Engine successfully intaken by Knapford!"),
+            Err(e) => println!("Failed to intake engine: {:?}", e),
+        }
+        match rx_reply.recv() {
+            Ok(result) => match result {
+                Ok(_) => println!("Knapford confirmed receipt of the engine."),
+                Err(e) => println!("Knapford reported an error while intaking the engine: {:?}", e),
+            },
+            Err(e) => println!("Failed to receive reply from Knapford: {:?}", e),
+        }
+    });
+
 
     
     // 2. Build the tracks using immutable references to the local variables!
     // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-
-
-
 
 
 
@@ -248,30 +360,25 @@ fn main() {
         Err(e) => println!("Failed to intake cargo: {:?}", e),
     }
 
-    //now to use the foam to create some freight orders
-    let freight_order1 = FreightOrder { id: 1, cargo_id: 7, origin: 0, destination: 1 };
-    let freight_order2 = FreightOrder { id: 2, cargo_id: 8, origin: 0, destination: 1 };
-    let freight_order3 = FreightOrder { id: 3, cargo_id: 9, origin: 0, destination: 1 };
-    //Testing that this whole .lock() thing really works! Choo!
-    {
-        let mut ledger_access = shared_ledger.lock().unwrap();
-        ledger_access.pending_cargo.push(freight_order1);
-        ledger_access.pending_cargo.push(freight_order2);
-        ledger_access.pending_cargo.push(freight_order3);
-    }
 
 
 
 
-    
-    // let mission1 = Mission { 
-    //     id: 1, 
-    //     request_id: 1001,
-    //     origin: String::from("Tidmouth"), 
-    //     destination: String::from("Brendam Docks"), 
-    //     required_cars: vec![2, 4], 
-    //     reply_channel: Some(tx_reply1) 
-    // };
+
+    //commenting out just to see if intake car pushes to global ledger correctly without us having to wait for the station to confirm receipt of the car. This will allow us to verify that the station is properly updating the global ledger with new cargo as it intakes it, which is an important part of how the station manages its inventory and fulfills missions. By testing this functionality, we can ensure that the station is correctly integrated with the global ledger and can keep track of the cargo it has on hand, which will be crucial for fulfilling freight orders and dispatching trains across the network. Let's see if the cargo IDs show up in the global ledger after we send the IntakeCargo command! Choo choo!
+    // //now to use the foam to create some freight orders
+    // let freight_order1 = FreightOrder { id: 1, cargo_ids: vec![7], origin: 0, destination: 1 , ttl: 5};
+    // let freight_order2 = FreightOrder { id: 2, cargo_ids: vec![8], origin: 0, destination: 1 , ttl: 5};
+    // let freight_order3 = FreightOrder { id: 3, cargo_ids: vec![9], origin: 0, destination: 1 , ttl: 5};
+    // //Testing that this whole .lock() thing really works! Choo!
+    // {
+    //     let mut ledger_access = shared_ledger.lock().unwrap();
+    //     ledger_access.pending_cargo.push(freight_order1);
+    //     ledger_access.pending_cargo.push(freight_order2);
+    //     ledger_access.pending_cargo.push(freight_order3);
+    // }
+
+
 
 
 
@@ -280,253 +387,108 @@ fn main() {
 
 
 
-// for id in shared_network.tracks.keys() {
-//     println!("Station {} has tracks to: {:?}", id, shared_network.tracks.get(id).unwrap().iter().map(|(dest, _)| dest).collect::<Vec<&u32>>());
+    // // 3. Spawn Producer 1
+    // let network_clone_1 = Arc::clone(&shared_network);
+    // let switchboard_clone_1 = temporary_switchboard.clone();
+    // let ledger_for_p1 = Arc::clone(&shared_ledger);
 
-// }
+    let producer_1 = Producer::new(1, Arc::clone(&shared_ledger), temporary_switchboard.clone());
+    let producer_1_handle = producer_1.start();
 
 
+    // // 4. Spawn Producer 2
+    // let network_clone_2 = Arc::clone(&shared_network);
+    // let switchboard_clone_2 = temporary_switchboard.clone();
 
-
-
-    // 3. Spawn Producer 1
-    let network_clone_1 = Arc::clone(&shared_network);
-    let switchboard_clone_1 = temporary_switchboard.clone();
-    let ledger_for_p1 = Arc::clone(&shared_ledger);
-
-    let producer_1_handle = thread::spawn(move || {
-        println!("Producer 1 ...");
-        let switchboard = switchboard_clone_1; // The producer can use the switchboard to send commands to stations
+    let producer_2 = Producer::new(2, Arc::clone(&shared_ledger), temporary_switchboard.clone());
+    let producer_2_handle = producer_2.start();
+    // let producer_2_handle = thread::spawn(move || {
+    //     println!("Producer 2: ...");
+    //     let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
         
-        // 1. Create a clipboard to hold our walkie-talkies!
-        let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
-
-        
-        loop {
-            println!("test_loop");
-            // 2. Create a temporary variable to hold our assignment (if we get one)
-            let my_assignment: Option<FreightOrder> = {
-                println!("Producer 1 is waiting for the Talking Stick to check the Global Ledger for pending cargo...");
-                
-                // 3. Wait in line for the Talking Stick
-                // --- LOCK ACQUIRED ---
-                let mut ledger_access = ledger_for_p1.lock().unwrap();
-                
-                // 4. We now have exclusive, mutable access to the GlobalLedger!
-
-                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
-                // We act like a Hungry Hippo: just pop the last item off the list.
-                // If the list is empty, pop() returns None.
-                ledger_access.pending_cargo.pop() 
-                
-            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
-            // 5. Now we are outside the lock. The ledger is free for other threads.
-            if let Some(freight_order) = my_assignment {
-                println!("Producer 1 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
-
-                let (tx_report, rx_report) = mpsc::channel();
+    //     // 1. Create a clipboard to hold our walkie-talkies!
+    //     let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
 
 
-                // Build our Mission for this single piece of cargo
-                
-                let mission = Mission {
-                    id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
-                    request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
-                    origin: freight_order.origin,
-                    destination: freight_order.destination,
-                    cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
-                    reply_channel: Some(tx_report.clone()), // The producer's channel to receive updates about this mission
-                };
-                
-                
-                if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
-                    println!("Producer 1 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
-                    
-                    origin_tx.clone().send(StationCommand::AssembleMission { 
-                        mission, // <-- Idiomatic Rust shorthand!
-                    }).expect("Failed to send AssembleMission command over open channel");
-
-                    // // The Tiny Intern Thread!
-                    // thread::spawn(move || {
-                    //     if let Ok(report) = rx_report.recv() {
-                    //         println!("Producer 1 received report: {:?}", report);
-                    //     }
-                    // });
-
-                    active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
-
-                } else {
-                    println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
-                }
-
-            } else {
-                println!("Ledger is empty. Producer 1 clocking out.");
-                break;
-            }
-
-
-        }
-        
-        
-        
-        
-        
-        
-        for rx in active_monitors {
-            if let Ok(report) = rx.recv() {
-                println!("Producer 1 received report: {:?}", report);
-            }
-        }
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        // println!("Producer 1: Submitting Mission 1 to the Network...");
-        // //The Producer threads will create the Mission payloads and send them to the Network. The Network will then process these missions by dispatching trains across the network to fulfill them. After processing each mission, the Network will send a report back to the respective producer thread through the reply channel included in the mission payload, allowing the producers to track the status of their missions and print out the results.
-        // let (tx_reply1, rx_reply1) = mpsc::channel();
-        // let mission1 = Mission { 
-        //     id: 1, 
-        //     request_id: 1001,
-        //     origin: 0,
-        //     destination: 1, 
-        //     required_cars: vec![2, 4], 
-        //     reply_channel: Some(tx_reply1) 
-        // };
-        // // Network creates the Conductor in the background!
-        // let (transit_tx, transit_rx) = mpsc::channel();
-        // //network_clone_1.dispatch_train_across_network(mission1); 
-        // switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission1.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
-        
-        // // Wait for the final report from the Conductor
-        // if let Ok(report) = rx_reply1.recv() {
-        //     println!("Producer 1 received report: {:?}", report);
-        // }
-    });
-
-    // 4. Spawn Producer 2
-    let network_clone_2 = Arc::clone(&shared_network);
-    let switchwboard_clone_2 = temporary_switchboard.clone();
-
-    let ledger_for_p2 = Arc::clone(&shared_ledger);
-    let producer_2_handle = thread::spawn(move || {
-        println!("Producer 2: ...");
-        let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
-        
-        // 1. Create a clipboard to hold our walkie-talkies!
-        let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
-
-
-        loop {
-            println!("test_loop_2");
+    //     loop {
+    //         println!("test_loop_2");
             
-            // 2. Create a temporary variable to hold our assignment (if we get one)
-            let my_assignment: Option<FreightOrder> = {
+    //         // 2. Create a temporary variable to hold our assignment (if we get one)
+    //         let my_assignment: Option<FreightOrder> = {
                 
-                // 3. Wait in line for the Talking Stick
-                // --- LOCK ACQUIRED ---
-                let mut ledger_access = ledger_for_p2.lock().unwrap();
+    //             // 3. Wait in line for the Talking Stick
+    //             // --- LOCK ACQUIRED ---
+    //             let mut ledger_access = ledger_for_p2.lock().unwrap();
 
-                // 4. We now have exclusive, mutable access to the GlobalLedger!
-                println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
+    //             // 4. We now have exclusive, mutable access to the GlobalLedger!
+    //             println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
                 
-                // We act like a Hungry Hippo: just pop the last item off the list.
-                // If the list is empty, pop() returns None.
-                ledger_access.pending_cargo.pop() 
+    //             // We act like a Hungry Hippo: just pop the last item off the list.
+    //             // If the list is empty, pop() returns None.
+    //             ledger_access.pending_cargo.pop() 
                 
-            }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
+    //         }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
 
-            // 5. Now we are outside the lock. The ledger is free for other threads.
-            if let Some(freight_order) = my_assignment {
-                println!("Producer 2 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
+    //         // 5. Now we are outside the lock. The ledger is free for other threads.
+    //         if let Some(freight_order) = my_assignment {
+    //             println!("Producer 2 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
                 
-                 let (tx_report, rx_report) = mpsc::channel();
-                // Build our Mission for this single piece of cargo
+    //              let (tx_report, rx_report) = mpsc::channel();
+    //             // Build our Mission for this single piece of cargo
 
-                let mission = Mission {
-                    id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
-                    request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
-                    origin: freight_order.origin,
-                    destination: freight_order.destination,
-                    cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
-                    reply_channel: Some(tx_report.clone()), // Producer 2 doesn't care about updates for this mission, so we can set the reply channel to None. The station will still process the mission and dispatch the train, but it won't send any updates back to Producer 2.
-                };
+    //             let mission = Mission {
+    //                 id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
+    //                 request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
+    //                 origin: freight_order.origin,
+    //                 destination: freight_order.destination,
+    //                 cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
+    //                 reply_channel: Some(tx_report.clone()), // Producer 2 doesn't care about updates for this mission, so we can set the reply channel to None. The station will still process the mission and dispatch the train, but it won't send any updates back to Producer 2.
+    //             };
 
                 
                 
-                if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
-                    println!("Producer 2 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
+    //             if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
+    //                 println!("Producer 2 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
                     
-                    origin_tx.clone().send(StationCommand::AssembleMission { 
-                        mission, // <-- Idiomatic Rust shorthand!
-                    }).expect("Failed to send AssembleMission command over open channel");
+    //                 origin_tx.clone().send(StationCommand::AssembleMission { 
+    //                     mission, // <-- Idiomatic Rust shorthand!
+    //                 }).expect("Failed to send AssembleMission command over open channel");
                     
-                    // // The Tiny Intern Thread!
-                    // thread::spawn(move || {
-                    //     if let Ok(report) = rx_report.recv() {
-                    //         println!("Producer 2 received report: {:?}", report);
-                    //     }
-                    // });
+    //                 // // The Tiny Intern Thread!
+    //                 // thread::spawn(move || {
+    //                 //     if let Ok(report) = rx_report.recv() {
+    //                 //         println!("Producer 2 received report: {:?}", report);
+    //                 //     }
+    //                 // });
 
-                    active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
+    //                 active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
 
-                } else {
-                    println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
-                }
+    //             } else {
+    //                 println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
+    //             }
 
                 
 
-            } else {
-                println!("Ledger is empty. Producer 2 clocking out.");
-                break;
-            }
-        }
+    //         } else {
+    //             println!("Ledger is empty. Producer 2 clocking out.");
+    //             break;
+    //         }
+    //     }
         
-        for rx in active_monitors {
-            if let Ok(report) = rx.recv() {
-                println!("Producer 2 received report: {:?}", report);
-            }
-        }
-        
-        
+    //     for rx in active_monitors {
+    //         if let Ok(report) = rx.recv() {
+    //             println!("Producer 2 received report: {:?}", report);
+    //         }
+    //     }
         
         
-        
-        
-        
-        
-        
-        // //Same thing for Producer 2, but with a different mission!
-        // let (tx_reply2, rx_reply2) = mpsc::channel();
-        // let mission2 = Mission{
-        //     id:2, 
-        //     request_id: 2002,
-        //     origin: 0,
-        //     destination: 1,
-        //     required_cars: vec![6],
-        //     reply_channel: Some(tx_reply2)
-        // };
-
-        // println!("Producer 2: Submitting Mission 2 to the Network...");
-
-        // let (transit_tx, transit_rx) = mpsc::channel();
-        // switchwboard_clone_2.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::AssembleMission { mission: mission2.clone(), reply_to: transit_tx }).expect("Failed to send AssembleMission command to Tidmouth");
-        // //network_clone_2.dispatch_train_across_network(mission2); 
-        
-        // if let Ok(report) = rx_reply2.recv() {
-        //     println!("Producer 2 received report: {:?}", report);
-        // }
-    });
+    // });
 
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
     //thread::sleep(std::time::Duration::from_secs(6)); // This is just to ensure that the producers have time to send their missions and receive their reports before we print the final status. In a more complex simulation, we would want to implement a more robust synchronization mechanism to ensure that all threads have completed their work before we proceed, but for this simple example, a short sleep is sufficient to allow the message passing to complete before we print the final results.
     println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
-        producer_1_handle.join().unwrap();
-        producer_2_handle.join().unwrap();
+        producer_1_handle.join().unwrap();//this is like a gate that ensures the main thread waits for producer 1
+        producer_2_handle.join().unwrap();//this as well, but for gate 2 and producer 2.
     println!("{BOLD}{GREEN}Simulation Complete.{RESET}");
 
 
