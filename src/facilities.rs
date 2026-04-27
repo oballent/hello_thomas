@@ -1,7 +1,7 @@
 use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, FreightOrder ,Location, MissionReport};
 use crate::network::{GlobalLedger, RailwayNetwork};
 use core::error;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use rand::Rng;
 
 use std::sync::{Arc, Mutex};
@@ -25,6 +25,12 @@ const EMPTY_CAR_WEIGHT: u32 = 2000; // Let's say every empty car weighs 2000kg. 
 static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(100);
 
 static GLOBAL_ORDER_ID: AtomicU32 = AtomicU32::new(1000);
+
+
+pub enum GossipStrategy {
+    Flood,
+    Swarm,
+}
 
 
 pub trait CanReport {
@@ -564,6 +570,12 @@ impl Station {
                     StationCommand::RequestEmptyCars { count } => {
                         state.handle_request_empty_cars(count);
                     }
+                    StationCommand::EngineRequest { requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
+                        state.handle_engine_request(requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+                    }
+                    StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
+                        //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
+                    }
                     StationCommand::PrintStatus => {
                         println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
                         state.print_status();
@@ -594,6 +606,7 @@ pub struct StationState {
     pub neighbors: HashMap<u32, Sender<StationCommand>>,
     pub map: Arc<RailwayNetwork>,
     pub ledger: Arc<Mutex<GlobalLedger>>,
+    pub seen_engine_request: HashSet<u32>, // To prevent engine request loops, we keep track of which engine requests we've already seen and handled. The key is the mission ID. When we receive an engine request, we check this HashSet first. If we've already seen it, we ignore it to prevent infinite loops of stations passing the same request back and forth. If we haven't seen it, we mark it as seen and proceed with handling the request.
     pub tx: Sender<StationCommand>, // The Boomerang
 }
 
@@ -619,6 +632,7 @@ impl StationState {
             map,
             ledger,
             tx,
+            seen_engine_request: HashSet::new(),
         }
     }
 
@@ -725,16 +739,43 @@ impl StationState {
             }
         }
 
+        // Knowing max hop distance is crucial for the engine selection. It ensures the engine's fuel capacity can handle the longest stretch of track without refueling.
+        let mut max_hop_distance = 0.0;
+        for i in 0..route.len() - 1 {
+            if let Some(dist) = self.map.get_distance(route[i], route[i+1]) {
+                if dist > max_hop_distance {
+                    max_hop_distance = dist;
+                }
+            }
+        }
+
         // Now we can finally check the roundhouse for a suitable engine, using the total weight and distance to determine which engines are capable of fulfilling this mission.
-        let engine = match self.roundhouse.find_suitable_engine(true_total_weight as f64, distance) {
+        let engine = match self.roundhouse.find_suitable_engine(true_total_weight as f64, max_hop_distance) { // We use the max_hop_distance for the engine check because that's the longest single stretch of track the engine's fuel needs to cover
             Ok(engine) => engine,
             Err(e) => {
                 println!("{RED}Roundhouse Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", mission.id, e);
                 
                 
-                let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
-                self.report_mission_failure(&mission, details);
+                // let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
+                // self.report_mission_failure(&mission, details);
 
+
+                
+                self.initiate_engine_request(self.id, mission.id, true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
+
+                // for neighbor in self.neighbors.values() {
+                //     match neighbor.send(StationCommand::EngineRequest { 
+                //         requester_id: self.id, 
+                        
+                //         min_capacity: true_total_weight as f64, 
+                //         mission_max_hop: max_hop_distance, 
+                //         ttl: 3 // We can set a TTL to prevent infinite loops of requests between stations
+                //         b
+                //     }) {
+                //         Ok(_) => println!("{YELLOW}[{}] Sent engine request to neighbor due to lack of suitable engines for Mission {}.{RESET}", self.name, mission.id),
+                //         Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send engine request to neighbor for mission {}. Error: {:?}{RESET}", self.name, mission.id, e),
+                //     }
+                // }
 
 
                 return;
@@ -808,12 +849,14 @@ impl StationState {
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
         if current_location == final_destination {
+            // TODO: Check to see if the train only has an engine and no cars. It's an engine_request response. We need to notify . . . who exactly, Polaris?
             println!("{GREEN}[{}] Train {} has reached its final destination! Unloading...{RESET}", self.name, train.id);
             //crack the egg
-            let (engine, cars, id, mission_id, report_to) = (train.engine,train.cars, train.id, train.mission_id, train.report_to); // Destructure the "Gestalt"
+            let (mut engine, cars, id, mission_id, report_to) = (train.engine,train.cars, train.id, train.mission_id, train.report_to); // Destructure the "Gestalt"
             let num_cars = cars.len();
             let mut failed_ids = Vec::new(); // We can fill this with any issues that arise during disassembly, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect disassembly.
             // 1. Return the Power
+            engine.refuel(); // We can refuel the engine before returning it to the roundhouse
             self.roundhouse.house(engine);
             // 2. Return the Cars
             failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
@@ -829,6 +872,8 @@ impl StationState {
 
             self.print_status();
         } else {
+            train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey
+
             let mission_id = train.mission_id.unwrap_or(0);
             let final_destination = train.destination;
             let current_location = self.id;
@@ -1034,6 +1079,234 @@ impl StationState {
             }
         }
     }
+
+    pub fn handle_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
+        println!("{BOLD}{YELLOW}[{}] Received request for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, min_capacity, mission_max_hop, ttl, requester_id);
+        // check the number of engines of ANY TYPE across the entire roundhouse. We cannot give away our last engine, so we need to make sure we have at least 2 engines before we can fulfill this request. If we have 2 or more engines, we can send one to the requester. If we only have 1 engine, we cannot fulfill the request without risking our own operations, so we will have to decline.
+        // we will iterate across the hashmap of engine types and count the total number of engines available. If the total number is greater than 1, we can fulfill the request. If the total number is 1 or less, we cannot fulfill the request.
+        
+        ttl -= 1; // Decrement TTL at the start of the method to ensure that we account for the hop to this station, even if we end up not forwarding the request due to lack of engines or TTL expiration. This way, the TTL accurately reflects the number of hops the request has taken through the network, regardless of whether it gets forwarded or not.
+
+        if self.seen_engine_request.contains(&request_id) {
+            println!("{YELLOW}Already processed engine request {}. Ignoring to prevent loops.{RESET}", request_id);
+                return;
+            } else {
+                self.seen_engine_request.insert(request_id);
+            }
+            
+        let total_engines_available: usize = self.roundhouse.stalls.iter().map(|(_, engines)| engines.len()).sum();
+        let route_to_requester = match self.map.find_shortest_path(self.id, requester_id) {
+            Some((_, r)) => r,
+            None => {
+                println!("{RED}Network Error: No track laid between {} and {}. Cannot fulfill engine request.{RESET}", self.id, requester_id);
+                return;
+            }
+        };
+        //let max_hop_to_requester = route_to_requester.windows(2).filter_map(|pair| self.map.get_distance(pair[0], pair[1])).fold(0./0., f64::max); // Calculate the max hop distance to the requester, which is needed to determine if we have a suitable engine that can make it there.
+        for i in 0..route_to_requester.len() - 1 {
+            if let Some(dist) = self.map.get_distance(route_to_requester[i], route_to_requester[i+1]) {
+                if dist > mission_max_hop {
+                    mission_max_hop = dist;
+                }
+            }
+        }
+
+        if total_engines_available > 1 {
+            match self.roundhouse.find_suitable_engine(min_capacity, mission_max_hop){
+                Ok(engine) => {
+                    println!("{GREEN}Roundhouse: Found suitable engine {} for requester {}. Dispatching...{RESET}", engine.id, requester_id);
+                    // We can dispatch the engine to the requester using the network's routing logic, which will find the best path from this station to the requester and send the engine along that path. We can create a temporary Train with just the engine and no cars to represent this transfer.
+                    let temp_train = Train {
+                        id: self.yard.generate_new_id(),
+                        engine,
+                        cars: Vec::new(),
+                        mission_id: None,
+                        destination: requester_id,
+                        report_to: None,
+                    };
+                    self.dispatch_train(temp_train, route_to_requester);
+
+                    // After dispatching the engine, we need to check if we should forward the request to our neighbors to see if they can also fulfill it, in case the requester needs multiple engines or if the requester is actually looking for an engine that meets the minimum capacity but also has other specific requirements that this engine doesn't meet. We can use the TTL to determine if we should forward the request, and we can use the branch_notified array to keep track of which neighbors have already been notified about this request to prevent loops. We will only forward the request if the TTL is greater than 0, and we will decrement the TTL before forwarding. We will also add this station's ID to the branch_notified array before forwarding, and we will increment the notified_count to keep track of how many neighbors have been notified.
+                    println!("{YELLOW}Roundhouse: Checking if we should forward the engine request to neighbors after dispatching an engine to requester {}.{RESET}", requester_id);
+                    if ttl > 0 {
+                        //ttl -= 1; // Decrement TTL before forwarding
+                        self.forward_engine_request(
+                            requester_id,
+                            request_id,
+                            min_capacity,
+                            mission_max_hop,
+                            ttl,
+                            branch_notified,
+                            notified_count,
+                        );
+                    } else {
+                        println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+                    }
+                
+
+
+                },
+                Err(e) => {
+                    println!("{RED}Roundhouse Error: Failed to find suitable engine for request from Station {}: {:?}.{RESET}", requester_id, e);
+                    if ttl > 0 {
+                        //ttl -= 1; // Decrement TTL before forwarding
+                        self.forward_engine_request(
+                            requester_id,
+                            request_id,
+                            min_capacity,
+                            mission_max_hop,
+                            ttl,
+                            branch_notified,
+                            notified_count,
+                        );
+                    } else {
+                        println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+                    }
+                
+                }
+            }
+        } else {
+
+
+            println!("{RED}Roundhouse: Only {} engine(s) available. Cannot fulfill request from Station {} without risking own operations.{RESET}", total_engines_available, requester_id);
+
+            if ttl > 0 {
+                //ttl -= 1; // Decrement TTL before forwarding
+                self.forward_engine_request(
+                    requester_id,
+                    request_id,
+                    min_capacity,
+                    mission_max_hop,
+                    ttl,
+                    branch_notified,
+                    notified_count,
+                );
+            } else {
+                println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+            }
+        
+        }
+
+    }
+
+
+    fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mission_max_hop: f64, ttl: u32) {
+        // We initialize branch_notified with the ID of the requester to prevent the request from being forwarded back to the requester and creating loops right from the start. We also initialize notified_count to 1 since we have already "notified" the requester by receiving the request in the first place.
+        let branch_notified = [requester_id; 64]; // We can use this array to keep track of which stations have been or will be notified of this request. Before forwarding this request, the station will place its id, as well the target stations' ids, into the array to prevent those stations from forwarding the request back to this station and creating loops. We initialize it with the requester_id to prevent loops right from the start.
+        let notified_count = 1; // We start with 1 because we have already "notified" the requester by receiving the request in the first place.
+        
+        self.forward_engine_request(requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+    }
+
+    // Copilot, let's make a helper method for forwarding engine_requests to neighbors. We'll need to do it for the origin of the request, and we will need it for multiple arms of handle_engine_request when we have to forward due to insufficient engines or when we have to fan out due to TTL. This method will take care of stamping the branch_notified array and forwarding the request to the appropriate neighbors based on the TTL and the number of valid candidates. As well as incrementing the notified_count and ensuring we don't forward to neighbors that have already been notified. You got it, Copilot!
+    fn forward_engine_request(&self, requester_id: u32, request_id: u32, min_capacity: f64, mission_max_hop: f64, ttl: u32, branch_notified: [u32; 64], notified_count: usize) {
+        use rand::seq::SliceRandom; // We can use this to randomly select neighbors to forward the request to if we have to fan out due to TTL and number of candidates.
+
+
+        //1. Discovery. First, we need to discover which neighbors are valid candidates for forwarding this request. Valid candidates are neighbors that have not already been notified about this request, which we can check using the branch_notified array and the notified_count to determine how many neighbors have already been notified.
+        let mut valid_candidates: Vec<u32> = Vec::new(); // We can use this vector to store the valid candidates for forwarding the request, which are neighbors that have not already been notified about this request (to prevent loops). 
+
+        let slice = &branch_notified[..notified_count]; // We can use this slice to check which neighbors have already been notified about this request. We only need to check the portion of the array that has been filled with notified neighbors, which is determined by the notified_count.
+
+        for (id, _) in &self.neighbors {
+            if !slice.contains(id) {
+                valid_candidates.push(*id);
+                
+            }
+        }
+
+        // 2. Determine Fan-Out. (The MIN) We need to determine how many neighbors to forward the request to based on the TTL and the number of valid candidates. We can only forward to as many neighbors as the TTL allows, and we also need to make sure we don't try to forward to more neighbors than we have available.
+        let fan_out = std::cmp::min(ttl as usize, valid_candidates.len()); // We can only forward to as many neighbors as the TTL allows, and we also need to make sure we don't try to forward to more neighbors than we have available, so we take the minimum of TTL and the number of valid candidates.
+
+        if fan_out == 0 {
+            println!("{RED}Roundhouse: No valid neighbors to forward engine request for Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+            return;
+        }
+        //3. Selection. We can randomly select neighbors from the valid candidates to forward the request to, up to the number allowed by the fan_out calculation. This random selection helps distribute the requests more evenly across the network and prevents certain stations from being overwhelmed with requests.
+        let mut rng = rand::thread_rng();
+        valid_candidates.shuffle(&mut rng); // We can shuffle the valid candidates to randomize which neighbors we forward to, to help distribute the requests more evenly across the network and prevent certain stations from being overwhelmed with requests.
+        let chosen_candidates = &valid_candidates[..fan_out]; // We take a slice of the valid candidates based on the fan_out number we calculated, which is determined by the TTL and the number of valid candidates.
+
+        // 4. Stamp the payload! Before we forward this request to the chosen neighbors, we need to stamp branch_notified with the IDs of the neighbors we are forwarding to.
+        let mut next_notified = branch_notified; // We can create a mutable copy of the branch_notified array to modify for the next hop.
+        let mut next_notified_count = notified_count; // We also need to keep track of how many neighbors have been notified so far.
+        for &recipient_id in chosen_candidates {
+            if next_notified_count < next_notified.len() { // We need to check this to prevent out-of-bounds errors in case we have a large number of neighbors and the branch_notified array is not large enough to hold all of them.
+                next_notified[next_notified_count] = recipient_id;
+                next_notified_count += 1;
+            }
+        }
+
+        // 5. Distribute. We can now forward the request to the chosen neighbors with the stamped payload and assigned TTL.
+
+        // First, let's determine how to split TTL among each chosen neighbor.
+
+        let base_ttl = ttl/ chosen_candidates.len() as u32; // First, we calculate the base TTL for each neighbor.
+        let ttl_remainder = ttl % chosen_candidates.len() as u32; // We also calculate the remainder of the TTL division, which we will distribute to the first few neighbors of the shuffled valid candidates to simulate randomness in TTL assignment.
+
+        // for chosen_id in chosen_candidates {
+        //     println!("{YELLOW} [{}]: Forwarding engine request to neighbor {} with base TTL {} and remainder TTL {} for request from Station {}.{RESET}", self.name, chosen_id, base_ttl, ttl_remainder, requester_id);
+        //     let assigned_ttl = if ttl_remainder > 0 {
+        //         ttl_remainder -= 1;
+        //         base_ttl + 1
+        //     } else {
+        //         base_ttl
+        //     };
+
+        //     match self.neighbors.get(&chosen_id) {
+        //         Some(neighbor) => {
+        //             match neighbor.send(StationCommand::EngineRequest { 
+        //                 requester_id, 
+        //                 request_id,
+        //                 min_capacity, 
+        //                 mission_max_hop, 
+        //                 ttl: assigned_ttl,
+        //                 branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
+        //                 notified_count: next_notified_count, // We also forward the updated count of how many neighbors have been notified so far.
+        //             }) {
+        //                 Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} due to insufficient engines for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
+        //                 Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, chosen_id, requester_id, e),
+        //             }
+        //         },
+        //         None => println!("{RED}Network Error: Neighbor {} not found in neighbors list of Station {}. Cannot forward engine request.{RESET}", chosen_id, self.name),
+        //     }       
+        // }
+
+
+        for (i, &chosen_id) in chosen_candidates.iter().enumerate() {
+            //First, everyone gets the same base TTL, and then we distribute the remainder TTL to the first few neighbors in the shuffled list to add some randomness to the TTL assignment.
+            let assigned_ttl = if i < ttl_remainder as usize {
+                base_ttl + 1
+            } else {
+                base_ttl
+            };
+            println!("{YELLOW} [{}]: Forwarding engine request to neighbor {} with assigned TTL {} for request from Station {}.{RESET}", self.name, chosen_id, assigned_ttl, requester_id);
+            match self.neighbors.get(&chosen_id) {
+                Some(neighbor) => {
+                    match neighbor.send(StationCommand::EngineRequest { 
+                        requester_id, 
+                        request_id,
+                        min_capacity, 
+                        mission_max_hop, 
+                        ttl: assigned_ttl,
+                        branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
+                        notified_count: next_notified_count, // We also forward the updated count of how many neighbors have been notified so far.
+                    }) {
+                        Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} due to insufficient engines for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
+                        Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, chosen_id, requester_id, e),
+                    }
+                },
+                None => println!("{RED}Network Error: Neighbor {} not found in neighbors list of Station {}. Cannot forward engine request.{RESET}", chosen_id, self.name),
+            }
+
+        }
+
+
+    }
+
+
+
+
 
     pub fn print_status(&self) {
         println!("{BOLD}{CYAN}--- Station Status: {} ---{RESET}", self.name);

@@ -355,6 +355,14 @@ impl Engine {
             Ok(())
         }
     }
+
+    pub fn refuel(&mut self) {
+        let max = self.engine_type.max_fuel_capacity();
+        if self.current_fuel < max {
+            self.current_fuel = max;
+            println!("{GREEN}⛽ Engine {} refueled to max capacity ({:.1}).{RESET}", self.id, max);
+        }
+    }
 }
 
 
@@ -511,6 +519,24 @@ pub enum StationCommand {
     RequestEmptyCars {
         count: u32,
     },
+    EngineRequest { 
+        requester_id: u32,
+        request_id: u32, // unique ID for this specific request
+        min_capacity: f64,
+        mission_max_hop: f64, // NEW: The widest gap the engine will face BEFORE or AFTER it arrives to the requesting station. This allows the engine to consider not just whether it can get TO the requesting station, but if it can complete the requesting station's entire mission, which is the real question. An engine might be able to get to the station but then not have enough fuel to complete the next leg of the journey, so this gives us a more holistic view of whether the engine is truly suitable for the mission.
+        ttl: u32,
+
+        // THE FIX: A fixed-size array and a counter.
+        // This lives entirely on the stack. Zero heap allocation!
+        branch_notified: [u32; 64], // A list of ancestor stations and their neighbors that have already been notified about this request. This prevents us from wasting TTL on sending the same request to the same station multiple times.
+        notified_count: usize,
+    },
+    EngineRequestResponse {
+        request_id: u32, // This should match the request_id from the EngineRequest command so the requester can correlate responses to their original request.
+        station_id: u32, // The ID of the station that is offering the engine. This allows the requester to know where the engine is coming from and potentially request it from that station if they want to.
+        engine: Engine,
+    },
+
     PrintStatus,                   // Reporting
     Terminate,                     // Graceful Shutdown
 }

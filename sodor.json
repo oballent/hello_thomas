@@ -1,12 +1,12 @@
 {
   "stations": [
-    { "id": 0, "name": "Tidmouth", "x": 100.0, "y": 100.0 },
-    { "id": 1, "name": "Brendam Docks", "x": 100.0, "y": 350.0 },
-    { "id": 2, "name": "Knapford", "x": 300.0, "y": 100.0 },
-    { "id": 3, "name": "Welsworth", "x": 300.0, "y": 350.0 },
-    { "id": 4, "name": "Maron", "x": 500.0, "y": 100.0 },
-    { "id": 5, "name": "Vicarstown", "x": 500.0, "y": 350.0 },
-    { "id": 6, "name": "Peel Godred", "x": 700.0, "y": 100.0 }
+    { "id": 0, "name": "Tidmouth", "x": 0.0, "y": 0.0 },
+    { "id": 1, "name": "Brendam Docks", "x": 0.0, "y": 250.0 },
+    { "id": 2, "name": "Knapford", "x": 200.0, "y": -50.0 },
+    { "id": 3, "name": "Welsworth", "x": 200.0, "y": 300.0 },
+    { "id": 4, "name": "Maron", "x": 400.0, "y": -50.0 },
+    { "id": 5, "name": "Vicarstown", "x": 450.0, "y": 200.0 },
+    { "id": 6, "name": "Peel Godred", "x": 600.0, "y": -150.0 }
   ],
   "tracks": [
     { "origin": 0, "destination": 2 },
@@ -15,6 +15,7 @@
     { "origin": 2, "destination": 4 },
     { "origin": 3, "destination": 1 },
     { "origin": 3, "destination": 4 },
+    { "origin": 3, "destination": 5 },
     { "origin": 4, "destination": 5 }
   ]
 }
