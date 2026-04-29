@@ -54,7 +54,8 @@ impl Producer {
         thread::spawn(move || {
             println!("{CYAN}Producer {} is starting up...{RESET}", self.id);
             // We still pull the pending cargo from the ledger, but we do it inside the thread so that we have access to the switchboard and can send commands to the stations.
-            let mut active_monitors: Vec<(Receiver<MissionReport>, FreightOrder)> = Vec::new(); // This pairs the mission report channels with their corresponding freight orders so we can keep track of which reports belong to which missions.
+            
+            let mut active_monitors: Vec<(Receiver<MissionReport>, FreightOrder)> = Vec::new(); // This pairs the mission report channels with their corresponding freight orders so we can keep track of which reports belong to which missions. Alternatively, we could just use missions, as mission is made up of freight order and the producer's reply channel. We'll probably change this later.
             let mut active: bool = true;
 
             while active {
@@ -97,7 +98,7 @@ impl Producer {
                     
                     
                     if let Some(origin_tx) = self.switchboard.get(&freight_order.origin) {
-                        println!("Producer {} is sending mission for cargo IDs {:?} to Station {}...", self.id, freight_order.cargo_ids, freight_order.origin);
+                        println!("{CYAN}Producer {} is sending mission {} for cargo IDs {:?} to Station {}...{RESET}", self.id, mission.id, freight_order.cargo_ids, freight_order.origin);
                         
                         origin_tx.clone().send(StationCommand::AssembleMission { 
                             mission, // <-- Idiomatic Rust shorthand!
@@ -115,6 +116,7 @@ impl Producer {
                     } else {
                         println!("{RED}Error: Radio channel for Station {} not found in switchboard! Reinserting freight order {:?} {RESET}", freight_order.origin, freight_order);// RE-INSERT INTO LEDGER!
                         let mut ledger_access = self.ledger.lock().unwrap();
+                        // This will cause a bug; the origin's rx is missing from the switchboard, so this freight order will just keep getting reinserted and never processed. In a real system, we would want to have some error handling for this case, such as a retry mechanism or a way to alert the system administrators that there is a problem with the switchboard. For our simulation, we will just print an error message and reinsert the freight order back into the ledger, but we should be aware that this could lead to an infinite loop if the switchboard issue is not resolved. But for now, we'll be able to see the bug in action with our println!
                         ledger_access.pending_cargo.push(freight_order);
                     }
 
@@ -128,7 +130,7 @@ impl Producer {
                         Ok(MissionReport::PartialSuccess(details)) => {
                             println!("{YELLOW} Producer {} partial success: {}", self.id, details);
                         }
-                        Ok(MissionReport::Failure(details)) => {
+                        Ok(MissionReport::Failure(details)) => { 
                             println!("{RED} Producer {} failure: {}", self.id, details);
                             // Optionally, we could reinsert the freight order back into the ledger here if we want to retry it later
                             let mut ledger_access = self.ledger.lock().unwrap();
@@ -142,7 +144,7 @@ impl Producer {
                             still_monitoring.push((rx, order));
                         }
                         Err(mpsc::TryRecvError::Disconnected) => {
-                            println!("{RED} Producer {} error: Station disconnected", self.id);
+                            println!("{RED} Producer {} error: Station {} disconnected", self.id, order.origin);
 
                         }
                     }
@@ -250,6 +252,15 @@ impl EngineType {
             EngineType::Diesel => 20000.0,
         }
     }
+
+    pub fn ideal_min_capacity(&self) -> f64 {
+        match self {
+            EngineType::Percy => 0000.0,
+            EngineType::Thomas => 5000.0,
+            EngineType::Gordon => 20000.0,
+            EngineType::Diesel => 15000.0,
+        }
+    }
     
     pub fn max_fuel_capacity(&self) -> f32 {
         // Let's assume these units are 'Liters' or 'Kilograms of Coal'
@@ -331,11 +342,17 @@ impl Engine {
         work / quotient
     }
 
+    pub fn is_ideal_for_mission(&self, weight: f64) -> bool {
+        let capacity = self.engine_type.max_capacity();
+        let ideal_min = self.engine_type.ideal_min_capacity();
+        weight > ideal_min && weight <= capacity
+    }
+
     pub fn can_complete_mission(&self, weight: f64, distance: f64) -> bool {
         let needed = self.calculate_fuel_requirement(weight, distance);
         
         if needed > self.current_fuel {
-            println!("{RED}Mission Impossible: Engine {} needs {:.1}, has {:.1}{RESET}", self.id, needed, self.current_fuel);
+            println!("{RED}Mission Impossible: Engine {} needs {:.1} fuel, has {:.1} fuel{RESET}", self.id, needed, self.current_fuel);
             false
         } else {
             println!("{GREEN}Mission Possible: Engine {} ready!{RESET}", self.id);
@@ -347,7 +364,7 @@ impl Engine {
         let needed = self.calculate_fuel_requirement(weight, distance);
         if needed > self.current_fuel {
             Err(TrainError::MissionImpossible {
-                reason: format!("Engine {} needs {:.1}, has {:.1}", self.id, needed, self.current_fuel),
+                reason: format!("Engine {} needs {:.1} fuel, has {:.1} fuel", self.id, needed, self.current_fuel),
             })
         } else {
             self.current_fuel -= needed;
@@ -427,7 +444,7 @@ impl Train {
 
     // Notice the &mut self. The train is 'taking damage' (burning fuel).
     pub fn dispatch(&mut self, distance_to_next_stop: f64) -> Result<f64, TrainError> {
-        println!("Train {} is departing for ({}km)...", self.id, distance_to_next_stop);
+        println!("Train {}::Engine {} is departing for ({}km)...", self.id, self.engine.id, distance_to_next_stop);
         
         // 1. Calculate the final weight
         let total_weight = self.calculate_gross_weight(); // Convert to u32 for fuel calculation. In a real system, we would want to be careful about potential overflows here and might want to use a larger integer type or a different approach to weight management.

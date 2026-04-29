@@ -26,6 +26,12 @@ static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(100);
 
 static GLOBAL_ORDER_ID: AtomicU32 = AtomicU32::new(1000);
 
+static GLOBAL_REQUEST_ID: AtomicU32 = AtomicU32::new(0000);
+
+static GLOBAL_MISSION_ID: AtomicU32 = AtomicU32::new(5000);
+
+static GLOBAL_TRAIN_ID: AtomicU32 = AtomicU32::new(2000);
+
 
 pub enum GossipStrategy {
     Flood,
@@ -119,6 +125,7 @@ pub trait TransitVehicle {
 
 
 pub struct Railyard {
+    pub id: u32,
     pub trains: Vec<Train>,
     pub cars: HashMap<u32, TrainCar>,
     pub next_train_id: u32,
@@ -173,8 +180,9 @@ impl Railyard {
 
 
 
-    fn new() -> Self {
+    fn new(id: u32) -> Self {
         Railyard {
+            id,
             trains: Vec::new(),
             cars: HashMap::new(),
             next_train_id: 1,
@@ -182,14 +190,19 @@ impl Railyard {
         }
     }
 
-    fn generate_new_id(&mut self) -> u32 {
-        let id = self.next_train_id;
-        self.next_train_id += 1; // Increment for the next train
-        id
+    fn generate_new_train_id(&mut self) -> u32 {
+        GLOBAL_TRAIN_ID.fetch_add(1, Ordering::SeqCst)
+    }
+    fn generate_new_request_id(&mut self) -> u32 {
+        GLOBAL_REQUEST_ID.fetch_add(1, Ordering::SeqCst)
     }
     
     fn generate_new_car_id(&self) -> u32 {
         GLOBAL_CAR_ID.fetch_add(1, Ordering::SeqCst)
+    }
+
+    fn generate_new_mission_id(&self) -> u32 {
+        GLOBAL_MISSION_ID.fetch_add(1, Ordering::SeqCst)
     }
 
     pub fn print_report(&self, roundhouse: &Roundhouse) { // <-- Note the new parameter!
@@ -340,14 +353,16 @@ impl Railyard {
 
 
 pub struct Roundhouse {
+    pub id: u32,
     pub stalls: HashMap<EngineType, VecDeque<Engine>>,
 }
 
 
 
 impl Roundhouse {
-    pub fn new() -> Self {
+    pub fn new(id:u32) -> Self {
         Roundhouse {
+            id,
             stalls: HashMap::new(),
         }
     }
@@ -366,6 +381,53 @@ impl Roundhouse {
             .pop_front()      // Take the one that's been waiting longest
     }
 
+
+    pub fn check_suitable_engine(&self, total_weight: f64, distance_km: f64) -> Option<&Engine> {
+        // We check each stall in order of engine strength
+        let roster = [
+            EngineType::Percy, 
+            EngineType::Thomas, 
+            EngineType::Diesel, 
+            EngineType::Gordon
+        ];
+
+        for etype in roster {
+            if let Some(queue) = self.stalls.get(&etype) {
+                for engine in queue {
+                    if engine.can_complete_mission(total_weight, distance_km) {
+                        return Some(engine);
+                    }
+                }
+            }
+        }
+        None // If we loop through the whole roster and find nothing, return None.
+    }
+
+    // Create a method that tells us only if we possess an engine perfect in strenght, not too weak, not too strong, just right. This is for the "Goldilocks" gossip strategy where we only want to ask for help if we don't have the perfect engine in our own roundhouse.
+    pub fn check_ideal_engine(&self, total_weight: f64, distance_km: f64) -> Option<&Engine> {
+        // We check each stall in order of engine strength
+        let roster = [
+            EngineType::Percy, 
+            EngineType::Thomas, 
+            EngineType::Diesel, 
+            EngineType::Gordon
+        ];
+
+        for etype in roster {
+            if let Some(queue) = self.stalls.get(&etype) {
+                for engine in queue {
+                    if engine.can_complete_mission(total_weight, distance_km) {
+                        // Check if it's a perfect match (not too weak, not too strong)
+                        if engine.is_ideal_for_mission(total_weight) {
+                            return Some(engine);
+                        }
+                    }
+                }
+            }
+        }
+        None // If we loop through the whole roster and find nothing, return None.
+    }
+
     pub fn find_suitable_engine(&mut self, total_weight: f64, distance_km: f64) -> Result<Engine, TrainError> {
         
         // 1. The Escalation Roster (Weakest to Strongest)
@@ -380,7 +442,7 @@ impl Roundhouse {
         for etype in roster {
             // Check if this TYPE is physically strong enough
             if etype.max_capacity() >= total_weight {
-                println!("{YELLOW}Roundhouse: Checking for available {:?} engines...{RESET}", etype);
+                println!("{YELLOW}Roundhouse {}: Checking for available {:?} engines...{RESET}", self.id, etype);
                 
                 // If it is, look inside that specific stall
                 if let Some(queue) = self.stalls.get_mut(&etype) {
@@ -393,7 +455,7 @@ impl Roundhouse {
                     // 2. Chain it using the `.and_then()` you love!
                     // If position returned Some(index), and_then passes that index into queue.remove()
                     if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
-                        println!("{GREEN}Roundhouse: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", engine.id, engine.engine_type, total_weight, distance_km);
+                        println!("{GREEN}Roundhouse {}: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", self.id, engine.id, engine.engine_type, total_weight, distance_km);
                         return Ok(engine);
                     }
                 }
@@ -402,19 +464,21 @@ impl Roundhouse {
         }
         
         // If we loop through the whole roster and find nothing, return an error.
-        println!("{RED}Roundhouse: No suitable engines available for mission ({}kg over {}km).{RESET}", total_weight, distance_km);
+        println!("{RED}Roundhouse {}: No suitable engines available for mission ({}kg over {}km).{RESET}", self.id, total_weight, distance_km);
         Err(TrainError::MissionImpossible { reason: "NO ENGINES CAN COMPLETE MISSION!".to_string() })
     }
 }
 
 
 pub struct Warehouse {
+    pub id: u32,
     pub inventory: HashMap<u32, Cargo>, // We can use the cargo ID as the key for easy retrieval and inventory management
 }
 
 impl Warehouse {
-    pub fn new() -> Self {
+    pub fn new(id:u32) -> Self {
         Warehouse {
+            id,
             inventory: HashMap::new(),
         }
     }
@@ -532,13 +596,14 @@ impl Station {
         // Create a channel for this station
         // instantiate roundhouse, yard, and warehouse, and copy station name, before moving them into the thread
         let station_name = String::from(name);
+        let station_id = id;
         let tx = tx; // The station's own Sender for receiving commands
 
         let mut state = StationState::new(id, station_name.clone(), neighbors, map.clone(), ledger.clone(), tx.clone());
         // Spawn a thread to run the station's internal loop
         thread::spawn(move || {
             // The station's internal state
-            println!("{BOLD}{CYAN}[{}] Station is now operational and awaiting commands...{RESET}", station_name);
+            println!("{BOLD}{CYAN}[{}]::Station {} is now operational and awaiting commands...{RESET}", station_name, station_id);
 
             // The station's main loop
             for command in rx {
@@ -577,11 +642,11 @@ impl Station {
                         //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
                     }
                     StationCommand::PrintStatus => {
-                        println!("{BOLD}{CYAN}[{}] Status Report Requested:{RESET}", station_name);
+                        println!("{BOLD}{CYAN}[{}]::Station {}: Status Report Requested:{RESET}", station_name, station_id);
                         state.print_status();
                     },
                     StationCommand::Terminate => {
-                        println!("{BOLD}{RED}[{}] Termination command received. Shutting down station thread.{RESET}", station_name);
+                        println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
                         break; // Exit the loop to terminate the thread
                     },
                 }
@@ -608,6 +673,7 @@ pub struct StationState {
     pub ledger: Arc<Mutex<GlobalLedger>>,
     pub seen_engine_request: HashSet<u32>, // To prevent engine request loops, we keep track of which engine requests we've already seen and handled. The key is the mission ID. When we receive an engine request, we check this HashSet first. If we've already seen it, we ignore it to prevent infinite loops of stations passing the same request back and forth. If we haven't seen it, we mark it as seen and proceed with handling the request.
     pub tx: Sender<StationCommand>, // The Boomerang
+    pub pending_missions: Vec<Mission>, // 
 }
 
 
@@ -625,14 +691,15 @@ impl StationState {
         StationState {
             id,
             name,
-            yard: Railyard::new(),
-            roundhouse: Roundhouse::new(),
-            warehouse: Warehouse::new(),
+            yard: Railyard::new(id),
+            roundhouse: Roundhouse::new(id),
+            warehouse: Warehouse::new(id),
             neighbors,
             map,
             ledger,
             tx,
             seen_engine_request: HashSet::new(),
+            pending_missions: Vec::new(),
         }
     }
 
@@ -690,7 +757,7 @@ impl StationState {
 
         // Now for the fun part: we're going to completely rewrite assemble_train as part of the Station's responsibilities, because the Station is now the mastermind behind the whole operation, and it needs to have access to its internal state (the yard and roundhouse) to pull this off. The network is just a map and dispatcher, so it makes more sense for the Station to handle the assembly logic directly.
 
-        println!("{BOLD}{CYAN}[{}] Starting assembly for Mission {}: {}kg to {} via {:?}.{RESET}", self.name, mission.id, mission.cargo_ids.len(), mission.destination, route);
+        println!("{BOLD}{CYAN}[{}]::Station {}: Starting assembly for Mission {}: {}kg to {} via {:?}.{RESET}", self.name, self.id, mission.id, mission.cargo_ids.len(), mission.destination, route);
         // The first thing we need to do is figure out the total weight of the cargo, because that will determine which engines we can use. 
         let total_cargo_weight = match self.warehouse.get_total_cargo_weight(&mission) {
             Ok(weight) => {
@@ -728,7 +795,7 @@ impl StationState {
                 //     println!("{RED}[{}] DEAD-LETTER: Failed to send request for empty cars for mission {} due to yard validation failure.{RESET}", self.name, mission.id);
                 // });
                 match self.tx.send(StationCommand::RequestEmptyCars { count: mission.cargo_ids.len() as u32 }) {
-                    Ok(_) => println!("{YELLOW}[{}] Sent request for {} empty cars to yard due to validation failure for Mission {}.{RESET}", self.name, mission.cargo_ids.len(), mission.id),
+                    Ok(_) => println!("{YELLOW}[{}]::Station {}: Sent request for {} empty cars to yard due to validation failure for Mission {}.{RESET}", self.name, self.id, mission.cargo_ids.len(), mission.id),
                     Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send request for empty cars for mission {} due to yard validation failure. Error: {:?}{RESET}", self.name, mission.id, e),
                 }
 
@@ -749,19 +816,23 @@ impl StationState {
             }
         }
 
+        
+        //let strict_mode = true; // Default is strictly "Goldilocks" - we will only accept an engine that is a perfect match for the mission's needs. If we don't have the perfect engine, we ask for help instead of just taking the next best thing. If pending missions becomes backlogged, we can consider relaxing this to allow for "overqualified" engines to take on missions that are below their ideal capacity, but for now we want to focus on the Goldilocks strategy to really test the engine request and network collaboration features.
+
         // Now we can finally check the roundhouse for a suitable engine, using the total weight and distance to determine which engines are capable of fulfilling this mission.
         let engine = match self.roundhouse.find_suitable_engine(true_total_weight as f64, max_hop_distance) { // We use the max_hop_distance for the engine check because that's the longest single stretch of track the engine's fuel needs to cover
             Ok(engine) => engine,
             Err(e) => {
-                println!("{RED}Roundhouse Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", mission.id, e);
+                println!("{RED}Roundhouse {} Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", self.id, mission.id, e);
                 
                 
                 // let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
                 // self.report_mission_failure(&mission, details);
+                self.pending_missions.push(mission);
 
-
+                let request_id = self.yard.generate_new_request_id(); // We can use the yard's ID generator to create unique request IDs for tracking engine requests across the network.
                 
-                self.initiate_engine_request(self.id, mission.id, true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
+                self.initiate_engine_request(self.id, request_id, true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
 
                 // for neighbor in self.neighbors.values() {
                 //     match neighbor.send(StationCommand::EngineRequest { 
@@ -827,7 +898,7 @@ impl StationState {
 
 
         let train = Train {
-            id: self.yard.generate_new_id(),
+            id: self.yard.generate_new_train_id(),
             engine,
             cars: attached_cars,
             mission_id: Some(mission.id),
@@ -838,25 +909,38 @@ impl StationState {
         self.dispatch_train(train, route);
     }
 
+    
+pub fn retry_pending_missions(&mut self) {
+    // 1. Drain the HashMap into a local Vector. 
+    // The moment this line finishes, `self.pending_missions` is empty and un-borrowed!
+    let parked_missions: VecDeque<Mission> = self.pending_missions.drain(..).collect();
+
+    // 2. Feed them right back into the funnel!
+    for mission in parked_missions {
+        println!("{YELLOW}[{}]{RESET} Retrying parked mission {}...", self.name, mission.id);
+        self.handle_assemble_mission(mission);
+    }
+}
 
 
     pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
-        let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can die.
+        let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can terminate.
+        train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey or for disassembly if this is the final destination.
         //println!("{:?}", train);
-        println!("{GREEN}[{}] Processing arrival of Train {}.{RESET}", self.name, train.id);
+        println!("{GREEN}[{}]::Station {}: Processing arrival of Train {}.{RESET}", self.name, self.id, train.id);
         let final_destination = train.destination;
         let current_location = self.id;
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
         if current_location == final_destination {
             // TODO: Check to see if the train only has an engine and no cars. It's an engine_request response. We need to notify . . . who exactly, Polaris?
-            println!("{GREEN}[{}] Train {} has reached its final destination! Unloading...{RESET}", self.name, train.id);
+            println!("{GREEN}[{}]::Station {}: Train {} has reached its final destination! Unloading...{RESET}", self.name, self.id, train.id);
             //crack the egg
             let (mut engine, cars, id, mission_id, report_to) = (train.engine,train.cars, train.id, train.mission_id, train.report_to); // Destructure the "Gestalt"
             let num_cars = cars.len();
             let mut failed_ids = Vec::new(); // We can fill this with any issues that arise during disassembly, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect disassembly.
             // 1. Return the Power
-            engine.refuel(); // We can refuel the engine before returning it to the roundhouse
+            //engine.refuel(); // We can refuel the engine before returning it to the roundhouse
             self.roundhouse.house(engine);
             // 2. Return the Cars
             failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
@@ -871,8 +955,29 @@ impl StationState {
             }
 
             self.print_status();
+
+            
+
+
+
+            // let still_pending:Vec<Mission> = self.pending_missions.drain().collect(); // We can drain the pending missions and attempt to retry them now that we've freed up the engine and cars from this completed mission. This is a simple way to implement a retry mechanism for missions that were waiting on resources that are now available. We can also add some logic to prevent infinite retries or to prioritize certain missions if needed.
+            // for mission in still_pending {
+            //     println!("{YELLOW}[{}]::Station {}: Retrying pending Mission {} after successful completion of Train {}.{RESET}", self.name, self.id, mission.id, id);
+
+            // }
+
+            self.retry_pending_missions();
+
+
+
+
+
+
+
+
+
         } else {
-            train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey
+            //train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey
 
             let mission_id = train.mission_id.unwrap_or(0);
             let final_destination = train.destination;
@@ -880,8 +985,8 @@ impl StationState {
             let (distance, route) = match self.map.find_shortest_path(current_location, final_destination) {
                 Some((d, r)) => {
                     println!(
-                        "{YELLOW}Network: Shortest path for Train {} to final destination {} is {} km via {:?}.{RESET}",
-                        train.id, final_destination, d, r
+                        "{YELLOW}Network: Shortest path for Mission {} Train {} to final destination {} is {} km via {:?}.{RESET}",
+                        mission_id, train.id, final_destination, d, r
                     );
                     (d, r)
                 },
@@ -1081,7 +1186,7 @@ impl StationState {
     }
 
     pub fn handle_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
-        println!("{BOLD}{YELLOW}[{}] Received request for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, min_capacity, mission_max_hop, ttl, requester_id);
+        println!("{BOLD}{YELLOW}[{}]::Station {}: Received request for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, self.id, min_capacity, mission_max_hop, ttl, requester_id);
         // check the number of engines of ANY TYPE across the entire roundhouse. We cannot give away our last engine, so we need to make sure we have at least 2 engines before we can fulfill this request. If we have 2 or more engines, we can send one to the requester. If we only have 1 engine, we cannot fulfill the request without risking our own operations, so we will have to decline.
         // we will iterate across the hashmap of engine types and count the total number of engines available. If the total number is greater than 1, we can fulfill the request. If the total number is 1 or less, we cannot fulfill the request.
         
@@ -1110,14 +1215,14 @@ impl StationState {
                 }
             }
         }
-
+        
         if total_engines_available > 1 {
             match self.roundhouse.find_suitable_engine(min_capacity, mission_max_hop){
                 Ok(engine) => {
-                    println!("{GREEN}Roundhouse: Found suitable engine {} for requester {}. Dispatching...{RESET}", engine.id, requester_id);
+                    println!("{GREEN}Roundhouse {}: Found suitable engine {} for requester {} for request {}. Dispatching...{RESET}", self.id, engine.id, requester_id, request_id);
                     // We can dispatch the engine to the requester using the network's routing logic, which will find the best path from this station to the requester and send the engine along that path. We can create a temporary Train with just the engine and no cars to represent this transfer.
                     let temp_train = Train {
-                        id: self.yard.generate_new_id(),
+                        id: 1000 + self.yard.generate_new_train_id(),
                         engine,
                         cars: Vec::new(),
                         mission_id: None,
@@ -1127,7 +1232,7 @@ impl StationState {
                     self.dispatch_train(temp_train, route_to_requester);
 
                     // After dispatching the engine, we need to check if we should forward the request to our neighbors to see if they can also fulfill it, in case the requester needs multiple engines or if the requester is actually looking for an engine that meets the minimum capacity but also has other specific requirements that this engine doesn't meet. We can use the TTL to determine if we should forward the request, and we can use the branch_notified array to keep track of which neighbors have already been notified about this request to prevent loops. We will only forward the request if the TTL is greater than 0, and we will decrement the TTL before forwarding. We will also add this station's ID to the branch_notified array before forwarding, and we will increment the notified_count to keep track of how many neighbors have been notified.
-                    println!("{YELLOW}Roundhouse: Checking if we should forward the engine request to neighbors after dispatching an engine to requester {}.{RESET}", requester_id);
+                    println!("{YELLOW}Roundhouse {}: Checking if we should forward the engine request to neighbors after dispatching an engine to requester {}.{RESET}", self.id, requester_id);
                     if ttl > 0 {
                         //ttl -= 1; // Decrement TTL before forwarding
                         self.forward_engine_request(
@@ -1140,14 +1245,14 @@ impl StationState {
                             notified_count,
                         );
                     } else {
-                        println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+                        println!("{RED}[Station {} Roundhouse]: TTL expired for engine request from Station {}.{RESET}", self.id, requester_id);
                     }
                 
 
 
                 },
                 Err(e) => {
-                    println!("{RED}Roundhouse Error: Failed to find suitable engine for request from Station {}: {:?}.{RESET}", requester_id, e);
+                    println!("{RED}Roundhouse {} Error: Failed to find suitable engine for request from Station {}: {:?}.{RESET}", self.id, requester_id, e);
                     if ttl > 0 {
                         //ttl -= 1; // Decrement TTL before forwarding
                         self.forward_engine_request(
@@ -1160,7 +1265,7 @@ impl StationState {
                             notified_count,
                         );
                     } else {
-                        println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+                        println!("{RED}[Station {} Roundhouse]: TTL expired for engine request from Station {}.{RESET}", self.id, requester_id);
                     }
                 
                 }
@@ -1168,7 +1273,7 @@ impl StationState {
         } else {
 
 
-            println!("{RED}Roundhouse: Only {} engine(s) available. Cannot fulfill request from Station {} without risking own operations.{RESET}", total_engines_available, requester_id);
+            println!("{RED}Roundhouse {}: Only {} engine(s) available. Cannot fulfill request from Station {} without risking own operations.{RESET}", self.id, total_engines_available, requester_id);
 
             if ttl > 0 {
                 //ttl -= 1; // Decrement TTL before forwarding
@@ -1182,7 +1287,7 @@ impl StationState {
                     notified_count,
                 );
             } else {
-                println!("{RED}Roundhouse: TTL expired for engine request from Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+                println!("{RED}[Station {} Roundhouse]: TTL expired for engine request from Station {}.{RESET}", self.id, requester_id);
             }
         
         }
@@ -1192,6 +1297,7 @@ impl StationState {
 
     fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mission_max_hop: f64, ttl: u32) {
         // We initialize branch_notified with the ID of the requester to prevent the request from being forwarded back to the requester and creating loops right from the start. We also initialize notified_count to 1 since we have already "notified" the requester by receiving the request in the first place.
+        println!("{YELLOW}Roundhouse {}: Initiating engine request for Station {} with request ID {}.{RESET}", self.id, requester_id, request_id);
         let branch_notified = [requester_id; 64]; // We can use this array to keep track of which stations have been or will be notified of this request. Before forwarding this request, the station will place its id, as well the target stations' ids, into the array to prevent those stations from forwarding the request back to this station and creating loops. We initialize it with the requester_id to prevent loops right from the start.
         let notified_count = 1; // We start with 1 because we have already "notified" the requester by receiving the request in the first place.
         
@@ -1219,7 +1325,7 @@ impl StationState {
         let fan_out = std::cmp::min(ttl as usize, valid_candidates.len()); // We can only forward to as many neighbors as the TTL allows, and we also need to make sure we don't try to forward to more neighbors than we have available, so we take the minimum of TTL and the number of valid candidates.
 
         if fan_out == 0 {
-            println!("{RED}Roundhouse: No valid neighbors to forward engine request for Station {}. Cannot fulfill request without risking own operations.{RESET}", requester_id);
+            println!("{RED}[Station {} Roundhouse]: No valid neighbors to forward engine request for Station {}. Cannot fulfill request without risking own operations.{RESET}", self.id, requester_id);
             return;
         }
         //3. Selection. We can randomly select neighbors from the valid candidates to forward the request to, up to the number allowed by the fan_out calculation. This random selection helps distribute the requests more evenly across the network and prevents certain stations from being overwhelmed with requests.
@@ -1280,7 +1386,7 @@ impl StationState {
             } else {
                 base_ttl
             };
-            println!("{YELLOW} [{}]: Forwarding engine request to neighbor {} with assigned TTL {} for request from Station {}.{RESET}", self.name, chosen_id, assigned_ttl, requester_id);
+            println!("{YELLOW} [{}]::Station{}: Forwarding engine request to neighbor {} with assigned TTL {} for request from Station {}.{RESET}", self.name, self.id, chosen_id, assigned_ttl, requester_id);
             match self.neighbors.get(&chosen_id) {
                 Some(neighbor) => {
                     match neighbor.send(StationCommand::EngineRequest { 
@@ -1292,7 +1398,7 @@ impl StationState {
                         branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
                         notified_count: next_notified_count, // We also forward the updated count of how many neighbors have been notified so far.
                     }) {
-                        Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} due to insufficient engines for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
+                        Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
                         Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, chosen_id, requester_id, e),
                     }
                 },
@@ -1359,11 +1465,12 @@ impl StationState {
 
         let train_id = train.id; // Store the train ID for logging inside the thread
         let station_name_clone = self.name.clone(); // Clone the station name for use in this thread
+        let station_id_clone = self.id.clone();
         let (transit_tx, transit_rx) = mpsc::channel();
 
         thread::spawn(move || {
             let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
-            println!("{BOLD}{YELLOW}[{}] Train {} is en route to next stop {}. Estimated time: {:.2} seconds.{RESET}", station_name_clone, train_id, next_stop, time);
+            println!("{BOLD}{YELLOW}[{}::Station {}: Train {} is en route on Mission {} to next stop [Station {}]. Estimated time: {:.2} seconds.{RESET}", station_name_clone, station_id_clone, train_id, train.mission_id.unwrap_or(0), next_stop, time);
             thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
 
             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
@@ -1388,7 +1495,7 @@ impl StationState {
 
             match transit_rx.recv() {
                 Ok(_) => {
-                    println!("{BOLD}{CYAN}[{}] CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, train_id, next_stop);
+                    println!("{BOLD}{CYAN}[{}]::Station {}: CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, station_id_clone, train_id, next_stop);
                     // Here we would handle the result of the transit, such as sending a MissionReport back to the mission's reply channel based on success or failure at the next station.
                 },
                 Err(e) => {
