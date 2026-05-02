@@ -22,15 +22,15 @@ const BOLD: &str = "\x1b[1m";
 const EMPTY_CAR_WEIGHT: u32 = 2000; // Let's say every empty car weighs 2000kg. This is important for fuel calculations, because the engine has to pull not just the cargo, but also the weight of the cars themselves.
 
 // We start at 100 so it doesn't collide with the hardcoded cars (1-6) you made in main!
-static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(100);
+static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(1000);
 
 static GLOBAL_ORDER_ID: AtomicU32 = AtomicU32::new(1000);
 
 static GLOBAL_REQUEST_ID: AtomicU32 = AtomicU32::new(0000);
 
-static GLOBAL_MISSION_ID: AtomicU32 = AtomicU32::new(5000);
+//static GLOBAL_MISSION_ID: AtomicU32 = AtomicU32::new(0000);
 
-static GLOBAL_TRAIN_ID: AtomicU32 = AtomicU32::new(2000);
+static GLOBAL_TRAIN_ID: AtomicU32 = AtomicU32::new(0000);
 
 
 pub enum GossipStrategy {
@@ -58,7 +58,7 @@ pub trait CanReport {
         let name = self.get_reporter_name();
         let message = format!("Mission {} partially failed at {}. Reason: {}. Lost car IDs: {:?}", mission_id, name, reason, lost_cargo_ids);
         if let Some(chan) = channel {
-            let _ = chan.send(MissionReport::PartialSuccess(message));
+            let _ = chan.send(MissionReport::PartialFailure(message));
         } else {
             println!("{RED}[{}] DEAD-LETTER: No reply channel available to report partial failure for mission {}. Reason: {}. Lost car IDs: {:?}{RESET}", name, mission_id, reason, lost_cargo_ids);
         }
@@ -201,9 +201,9 @@ impl Railyard {
         GLOBAL_CAR_ID.fetch_add(1, Ordering::SeqCst)
     }
 
-    fn generate_new_mission_id(&self) -> u32 {
-        GLOBAL_MISSION_ID.fetch_add(1, Ordering::SeqCst)
-    }
+    // fn generate_new_mission_id(&self) -> u32 {
+    //     GLOBAL_MISSION_ID.fetch_add(1, Ordering::SeqCst)
+    // }
 
     pub fn print_report(&self, roundhouse: &Roundhouse) { // <-- Note the new parameter!
         println!("\n{BOLD}{CYAN}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓{RESET}");
@@ -580,15 +580,15 @@ pub struct StationMetadata {
 
 }
 
-pub struct Station {
-    pub id: u32,
-    pub name: String,
-    pub neighbors: HashMap<u32, Sender<StationCommand>>, // The station's direct neighbors and their command channels
-    pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
-    pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
-    pub location: Location, // The station's location on the network (for distance calculations)
-    // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
-}
+    pub struct Station {
+        // pub id: u32,
+        // pub name: String,
+        // pub neighbors: HashMap<u32, Sender<StationCommand>>, // The station's direct neighbors and their command channels
+        // pub tx: Sender<StationCommand>, // The station's command channel for receiving instructions
+        // pub map: Arc<RailwayNetwork>, // The shared network map for the station to access
+        // pub location: Location, // The station's location on the network (for distance calculations)
+        // We no longer hold the yard, warehouse, and roundhouse directly in the Station struct
+    }   
 
 
 impl Station {
@@ -635,11 +635,15 @@ impl Station {
                     StationCommand::RequestEmptyCars { count } => {
                         state.handle_request_empty_cars(count);
                     }
-                    StationCommand::EngineRequest { requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
-                        state.handle_engine_request(requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+                    StationCommand::EngineRequest { requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
+                        state.handle_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
                     }
                     StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
                         //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
+                    }
+                    StationCommand::CheckStatus => {// The Alarm Clock: station sends to itself every X seconds to trigger regular status checks and maintenance tasks like checking pending missions, gossiping about engines, etc.
+                        println!("{BOLD}{CYAN}[{}]::Station {}: Checking pending missions...{RESET}", station_name, station_id);
+                        state.check_pending_missions();
                     }
                     StationCommand::PrintStatus => {
                         println!("{BOLD}{CYAN}[{}]::Station {}: Status Report Requested:{RESET}", station_name, station_id);
@@ -825,14 +829,14 @@ impl StationState {
             Err(e) => {
                 println!("{RED}Roundhouse {} Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", self.id, mission.id, e);
                 
+                let mission_id = mission.id;
+                let request_id = self.yard.generate_new_request_id(); // We can use the yard's ID generator to create unique request IDs for tracking engine requests across the network.
                 
                 // let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
                 // self.report_mission_failure(&mission, details);
                 self.pending_missions.push(mission);
 
-                let request_id = self.yard.generate_new_request_id(); // We can use the yard's ID generator to create unique request IDs for tracking engine requests across the network.
-                
-                self.initiate_engine_request(self.id, request_id, true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
+                self.initiate_engine_request(self.id, request_id, Some(mission_id), true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
 
                 // for neighbor in self.neighbors.values() {
                 //     match neighbor.send(StationCommand::EngineRequest { 
@@ -901,7 +905,7 @@ impl StationState {
             id: self.yard.generate_new_train_id(),
             engine,
             cars: attached_cars,
-            mission_id: Some(mission.id),
+            mission_id: Some(mission.id), // We can include the whole mission in the train for easy access to all its details during transit and at the destination, which will be helpful for reporting and any potential issues that arise during the journey.
             destination: mission.destination.clone(),
             report_to: mission.reply_channel.clone(),
         };
@@ -936,22 +940,22 @@ pub fn retry_pending_missions(&mut self) {
             // TODO: Check to see if the train only has an engine and no cars. It's an engine_request response. We need to notify . . . who exactly, Polaris?
             println!("{GREEN}[{}]::Station {}: Train {} has reached its final destination! Unloading...{RESET}", self.name, self.id, train.id);
             //crack the egg
-            let (mut engine, cars, id, mission_id, report_to) = (train.engine,train.cars, train.id, train.mission_id, train.report_to); // Destructure the "Gestalt"
-            let num_cars = cars.len();
-            let mut failed_ids = Vec::new(); // We can fill this with any issues that arise during disassembly, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect disassembly.
+            let ( engine, cars, mission_id, report_to) = (train.engine,train.cars, train.mission_id, train.report_to); // Destructure the "Gestalt"
+            //let num_cars = cars.len();
+            //let failed_ids: Vec<u32>; // We can fill this with any issues that arise during disassembly, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect disassembly.
             // 1. Return the Power
             //engine.refuel(); // We can refuel the engine before returning it to the roundhouse
             self.roundhouse.house(engine);
             // 2. Return the Cars
-            failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
+            let failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
             if failed_ids.is_empty() {
                 
                 let details = "Successfully disassembled train and processed all cargo without issues.";
-                self.send_success_report(mission_id.unwrap_or(0), details, report_to);
+                self.send_success_report(mission_id.expect("Unloading cargo after receiving a train implies a Mission is involved! There should be an id!"), details, report_to);
             } else {
                 let details = "Partial success during train disassembly. Some items in purgatory.";
-                 self.send_partial_failure_report(mission_id.unwrap_or(0), details, &failed_ids, report_to);
+                 self.send_partial_failure_report(mission_id.expect("Unloading cargo after receiving a train implies a Mission is involved! There should be an id!"), details, &failed_ids, report_to);
             }
 
             self.print_status();
@@ -979,14 +983,14 @@ pub fn retry_pending_missions(&mut self) {
         } else {
             //train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey
 
-            let mission_id = train.mission_id.unwrap_or(0);
+            let mission_id = train.mission_id;
             let final_destination = train.destination;
             let current_location = self.id;
             let (distance, route) = match self.map.find_shortest_path(current_location, final_destination) {
                 Some((d, r)) => {
                     println!(
                         "{YELLOW}Network: Shortest path for Mission {} Train {} to final destination {} is {} km via {:?}.{RESET}",
-                        mission_id, train.id, final_destination, d, r
+                        mission_id.unwrap_or(0), train.id, final_destination, d, r
                     );
                     (d, r)
                 },
@@ -1001,7 +1005,7 @@ pub fn retry_pending_missions(&mut self) {
                             Ok(None) => {}, // Car is empty but safely in the yard
                             Err((homeless_car, e)) => {
                                 println!("{RED}Train {}: Failed to process Car {} during salvage: {:?}. Moving to purgatory.{RESET}", train.id, car_id, e);
-                                let rejected_asset = RejectedAsset::new(homeless_car, e, train.mission_id);
+                                let rejected_asset = RejectedAsset::new(homeless_car, e, train.mission_id,);
                                 self.yard.purgatory.push(rejected_asset);
                             }
                         }
@@ -1021,7 +1025,7 @@ pub fn retry_pending_missions(&mut self) {
                     //     // let _ = sender.send(report);
                     // }
                     let reason = "Failed at the None arm of the Dijkstra check";
-                    self.send_failure_report(mission_id, reason, train.report_to);
+                    self.send_failure_report(train.mission_id.expect("This is a failure report; There should be a mission_id on this train!"), reason, train.report_to);
                     return;
                 }
             };
@@ -1042,12 +1046,13 @@ pub fn retry_pending_missions(&mut self) {
         let stranded_issues = self.process_cars(surviving_cars, Some(mission_id)); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
         let reason: String = if stranded_issues.is_empty() {
-            "Engine lost, but all surviving cars were successfully salvaged.".to_string()
+            //"Engine lost, but all surviving cars were successfully salvaged.".to_string()
+            format!("Engine lost, but all surviving cars were successfully salvaged. Salvaged cargo IDs: {:?}.", salvaged_cargo_ids)
         } else {
             format!("Engine lost, and some cars failed intake and sit in purgatory: {:?}.", stranded_issues)
         };
         let replacement_freight_order: FreightOrder = FreightOrder {
-            id: GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst), // Generate a new unique order ID for the replacement freight order
+            id: mission_id, // Use the existing mission ID for the replacement freight order
             cargo_ids: salvaged_cargo_ids,
             destination,
             origin: self.id,
@@ -1185,8 +1190,8 @@ pub fn retry_pending_missions(&mut self) {
         }
     }
 
-    pub fn handle_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
-        println!("{BOLD}{YELLOW}[{}]::Station {}: Received request for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, self.id, min_capacity, mission_max_hop, ttl, requester_id);
+    pub fn handle_engine_request(&mut self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
+        println!("{BOLD}{YELLOW}[{}]::Station {}: Received engine request {} for mission ID {:?} for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, self.id, request_id, mission_id, min_capacity, mission_max_hop, ttl, requester_id);
         // check the number of engines of ANY TYPE across the entire roundhouse. We cannot give away our last engine, so we need to make sure we have at least 2 engines before we can fulfill this request. If we have 2 or more engines, we can send one to the requester. If we only have 1 engine, we cannot fulfill the request without risking our own operations, so we will have to decline.
         // we will iterate across the hashmap of engine types and count the total number of engines available. If the total number is greater than 1, we can fulfill the request. If the total number is 1 or less, we cannot fulfill the request.
         
@@ -1222,10 +1227,10 @@ pub fn retry_pending_missions(&mut self) {
                     println!("{GREEN}Roundhouse {}: Found suitable engine {} for requester {} for request {}. Dispatching...{RESET}", self.id, engine.id, requester_id, request_id);
                     // We can dispatch the engine to the requester using the network's routing logic, which will find the best path from this station to the requester and send the engine along that path. We can create a temporary Train with just the engine and no cars to represent this transfer.
                     let temp_train = Train {
-                        id: 1000 + self.yard.generate_new_train_id(),
+                        id: self.yard.generate_new_train_id(),
                         engine,
                         cars: Vec::new(),
-                        mission_id: None,
+                        mission_id,
                         destination: requester_id,
                         report_to: None,
                     };
@@ -1238,6 +1243,7 @@ pub fn retry_pending_missions(&mut self) {
                         self.forward_engine_request(
                             requester_id,
                             request_id,
+                            mission_id,
                             min_capacity,
                             mission_max_hop,
                             ttl,
@@ -1258,6 +1264,7 @@ pub fn retry_pending_missions(&mut self) {
                         self.forward_engine_request(
                             requester_id,
                             request_id,
+                            mission_id,
                             min_capacity,
                             mission_max_hop,
                             ttl,
@@ -1280,6 +1287,7 @@ pub fn retry_pending_missions(&mut self) {
                 self.forward_engine_request(
                     requester_id,
                     request_id,
+                    mission_id,
                     min_capacity,
                     mission_max_hop,
                     ttl,
@@ -1295,19 +1303,19 @@ pub fn retry_pending_missions(&mut self) {
     }
 
 
-    fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, min_capacity: f64, mission_max_hop: f64, ttl: u32) {
+    fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mission_max_hop: f64, ttl: u32) {
         // We initialize branch_notified with the ID of the requester to prevent the request from being forwarded back to the requester and creating loops right from the start. We also initialize notified_count to 1 since we have already "notified" the requester by receiving the request in the first place.
-        println!("{YELLOW}Roundhouse {}: Initiating engine request for Station {} with request ID {}.{RESET}", self.id, requester_id, request_id);
+        println!("{YELLOW}Roundhouse {}: Initiating engine request for Station {} with request ID {} for mission ID {:?}.{RESET}", self.id, requester_id, request_id, mission_id);
         let branch_notified = [requester_id; 64]; // We can use this array to keep track of which stations have been or will be notified of this request. Before forwarding this request, the station will place its id, as well the target stations' ids, into the array to prevent those stations from forwarding the request back to this station and creating loops. We initialize it with the requester_id to prevent loops right from the start.
         let notified_count = 1; // We start with 1 because we have already "notified" the requester by receiving the request in the first place.
         
-        self.forward_engine_request(requester_id, request_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+        self.forward_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
     }
 
     // Copilot, let's make a helper method for forwarding engine_requests to neighbors. We'll need to do it for the origin of the request, and we will need it for multiple arms of handle_engine_request when we have to forward due to insufficient engines or when we have to fan out due to TTL. This method will take care of stamping the branch_notified array and forwarding the request to the appropriate neighbors based on the TTL and the number of valid candidates. As well as incrementing the notified_count and ensuring we don't forward to neighbors that have already been notified. You got it, Copilot!
-    fn forward_engine_request(&self, requester_id: u32, request_id: u32, min_capacity: f64, mission_max_hop: f64, ttl: u32, branch_notified: [u32; 64], notified_count: usize) {
+    fn forward_engine_request(&self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mission_max_hop: f64, ttl: u32, branch_notified: [u32; 64], notified_count: usize) {
         use rand::seq::SliceRandom; // We can use this to randomly select neighbors to forward the request to if we have to fan out due to TTL and number of candidates.
-
+        
 
         //1. Discovery. First, we need to discover which neighbors are valid candidates for forwarding this request. Valid candidates are neighbors that have not already been notified about this request, which we can check using the branch_notified array and the notified_count to determine how many neighbors have already been notified.
         let mut valid_candidates: Vec<u32> = Vec::new(); // We can use this vector to store the valid candidates for forwarding the request, which are neighbors that have not already been notified about this request (to prevent loops). 
@@ -1392,17 +1400,18 @@ pub fn retry_pending_missions(&mut self) {
                     match neighbor.send(StationCommand::EngineRequest { 
                         requester_id, 
                         request_id,
-                        min_capacity, 
+                        mission_id, // We also need to forward the mission_id in case we need to correlate this engine request with a specific mission at the requester station.
+                        min_capacity,
                         mission_max_hop, 
                         ttl: assigned_ttl,
                         branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
                         notified_count: next_notified_count, // We also forward the updated count of how many neighbors have been notified so far.
                     }) {
-                        Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
-                        Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, chosen_id, requester_id, e),
+                        Ok(_) => println!("{YELLOW}[{}] Forwarded engine request {} for mission ID {:?} to neighbor {} for request from Station {}.{RESET}", self.name, request_id, mission_id, chosen_id, requester_id),
+                        Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request {} for mission ID {:?} to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, request_id, mission_id, chosen_id, requester_id, e),
                     }
                 },
-                None => println!("{RED}Network Error: Neighbor {} not found in neighbors list of Station {}. Cannot forward engine request.{RESET}", chosen_id, self.name),
+                None => println!("{RED}Network Error: Neighbor {} not found in neighbors list of Station {}. Cannot forward engine request {} for mission ID {:?}.{RESET}", chosen_id, self.name, request_id, mission_id),
             }
 
         }
@@ -1410,6 +1419,15 @@ pub fn retry_pending_missions(&mut self) {
 
     }
 
+
+
+
+    pub fn check_pending_missions(&mut self) {
+        if !self.pending_missions.is_empty() {
+            println!("{YELLOW} Heartbeat Check: Station {} has {} pending missions waiting for resources. Attempting to retry... {RESET}", self.name, self.pending_missions.len());
+            self.retry_pending_missions();
+        }
+    }
 
 
 
@@ -1433,7 +1451,7 @@ pub fn retry_pending_missions(&mut self) {
     }
 
 
-    // We can also add helper methods for other command handlers here, such as handle_emergency_sos, handle_intake_cars, and handle_intake_engine, to keep the main command handling logic clean and organized.
+    // This is a helper method for processing incoming cars, both from train arrivals and from external sources. It attempts to receive each car into the yard, and if the car contains cargo, it moves the cargo into the warehouse. If any issues arise during this process (such as contraband detection or other intake errors), it logs the issue, moves the car to purgatory, and collects the IDs of any cars that failed intake to include in the MissionReport for transparency.
     pub fn process_cars (&mut self, cars: Vec<TrainCar>, mission_id: Option<u32>) -> Vec<u32> {
         let mut failed_ids = Vec::new(); // We can fill this with any issues that arise during processing, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect process.
         for car in cars {

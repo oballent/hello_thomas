@@ -50,7 +50,7 @@ pub struct TrackConfig {
 
 // I AM The Fat Controller - or, at least, I would be if this were built around a Monolithic Architecture - but it's not!
 // Asynchronous and Distributed systems are the name of the game! All aboard for a Rustacean adventure on the Island of Sodor! Choo choo!
-// P.S. Copilot and Gemini were here, helping me write this code! Rust is hard, but together we can do it! Let's build the best darn Sodor railway simulation the world has ever seen! Choo choo!
+// P.S. Copilot, Gemini, and ChatGPT were here, helping me write this code! Rust is hard, but together we can do it! Let's build the best darn Sodor railway simulation the world has ever seen! Choo choo!
 // Ahem, let's get this show on the rails!
 
 fn main() {
@@ -402,88 +402,7 @@ fn main() {
 
     let producer_2 = Producer::new(2, Arc::clone(&shared_ledger), temporary_switchboard.clone());
     let producer_2_handle = producer_2.start();
-    // let producer_2_handle = thread::spawn(move || {
-    //     println!("Producer 2: ...");
-    //     let switchboard = switchwboard_clone_2; // The producer can use the switchboard to send commands to stations
-        
-    //     // 1. Create a clipboard to hold our walkie-talkies!
-    //     let mut active_monitors = Vec::<mpsc::Receiver<MissionReport>>::new();
-
-
-    //     loop {
-    //         println!("test_loop_2");
-            
-    //         // 2. Create a temporary variable to hold our assignment (if we get one)
-    //         let my_assignment: Option<FreightOrder> = {
-                
-    //             // 3. Wait in line for the Talking Stick
-    //             // --- LOCK ACQUIRED ---
-    //             let mut ledger_access = ledger_for_p2.lock().unwrap();
-
-    //             // 4. We now have exclusive, mutable access to the GlobalLedger!
-    //             println!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
-                
-    //             // We act like a Hungry Hippo: just pop the last item off the list.
-    //             // If the list is empty, pop() returns None.
-    //             ledger_access.pending_cargo.pop() 
-                
-    //         }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
-
-    //         // 5. Now we are outside the lock. The ledger is free for other threads.
-    //         if let Some(freight_order) = my_assignment {
-    //             println!("Producer 2 claimed cargo ID {}. Building mission...", freight_order.cargo_id);
-                
-    //              let (tx_report, rx_report) = mpsc::channel();
-    //             // Build our Mission for this single piece of cargo
-
-    //             let mission = Mission {
-    //                 id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
-    //                 request_id: (1000 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
-    //                 origin: freight_order.origin,
-    //                 destination: freight_order.destination,
-    //                 cargo_ids: vec![freight_order.cargo_id], // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
-    //                 reply_channel: Some(tx_report.clone()), // Producer 2 doesn't care about updates for this mission, so we can set the reply channel to None. The station will still process the mission and dispatch the train, but it won't send any updates back to Producer 2.
-    //             };
-
-                
-                
-    //             if let Some(origin_tx) = switchboard.get(&freight_order.origin) {
-    //                 println!("Producer 2 is sending mission for cargo ID {} to Station {}...", freight_order.cargo_id, freight_order.origin);
-                    
-    //                 origin_tx.clone().send(StationCommand::AssembleMission { 
-    //                     mission, // <-- Idiomatic Rust shorthand!
-    //                 }).expect("Failed to send AssembleMission command over open channel");
-                    
-    //                 // // The Tiny Intern Thread!
-    //                 // thread::spawn(move || {
-    //                 //     if let Ok(report) = rx_report.recv() {
-    //                 //         println!("Producer 2 received report: {:?}", report);
-    //                 //     }
-    //                 // });
-
-    //                 active_monitors.push(rx_report);// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
-
-    //             } else {
-    //                 println!("{RED}Error: Radio channel for Station {} not found in switchboard!{RESET}", freight_order.origin);
-    //             }
-
-                
-
-    //         } else {
-    //             println!("Ledger is empty. Producer 2 clocking out.");
-    //             break;
-    //         }
-    //     }
-        
-    //     for rx in active_monitors {
-    //         if let Ok(report) = rx.recv() {
-    //             println!("Producer 2 received report: {:?}", report);
-    //         }
-    //     }
-        
-        
-    // });
-
+    
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
     //thread::sleep(std::time::Duration::from_secs(6)); // This is just to ensure that the producers have time to send their missions and receive their reports before we print the final status. In a more complex simulation, we would want to implement a more robust synchronization mechanism to ensure that all threads have completed their work before we proceed, but for this simple example, a short sleep is sufficient to allow the message passing to complete before we print the final results.
     println!("{YELLOW}Waiting for producer threads to complete...{RESET}");

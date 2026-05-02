@@ -90,6 +90,8 @@ impl Producer {
                     let mission = Mission {
                         id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
                         request_id: (10 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
+                        attempts: 0, // Initialize attempts to 0
+                        highpriority: false, // Initialize highpriority to false
                         origin: freight_order.origin,
                         destination: freight_order.destination,
                         cargo_ids: freight_order.cargo_ids.clone(), // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
@@ -127,8 +129,8 @@ impl Producer {
                 for (rx, mut order) in active_monitors {
                     match rx.try_recv() {
                         Ok(MissionReport::Success(details)) => println!("{GREEN} Producer {} success: {}", self.id, details),
-                        Ok(MissionReport::PartialSuccess(details)) => {
-                            println!("{YELLOW} Producer {} partial success: {}", self.id, details);
+                        Ok(MissionReport::PartialFailure(details)) => {
+                            println!("{YELLOW} Producer {} partial failure: {}", self.id, details);
                         }
                         Ok(MissionReport::Failure(details)) => { 
                             println!("{RED} Producer {} failure: {}", self.id, details);
@@ -256,9 +258,9 @@ impl EngineType {
     pub fn ideal_min_capacity(&self) -> f64 {
         match self {
             EngineType::Percy => 0000.0,
-            EngineType::Thomas => 5000.0,
-            EngineType::Gordon => 20000.0,
-            EngineType::Diesel => 15000.0,
+            EngineType::Thomas => 0000.0,
+            EngineType::Gordon => 15000.0,
+            EngineType::Diesel => 5000.0,
         }
     }
     
@@ -424,7 +426,7 @@ pub struct Train{
     pub cars: Vec<TrainCar>,
     pub engine: Engine, // Ownership! The Engine is PHYSICALLY in the Train now.
     //pub distance_km: f64, // We can add more fields here as needed, like destination, mission details, etc.
-    pub mission_id: Option<u32>, // We can link this train to a specific mission if we want to track that way.
+    pub mission_id: Option<u32>, // This is optional because a train might be in the process of being assembled and not have a mission yet, or it might be between missions.
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
     pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
@@ -481,11 +483,22 @@ impl Train {
 
 }
 
+
+
+
+
+
+
+
+
+
 #[derive(Debug)]
 #[derive(Clone)]
 pub struct Mission {
     pub id: u32,
     pub request_id: u32,
+    pub attempts: u32, // We can use this to track how many times we've tried to complete this mission, which can be useful for debugging and for implementing retry logic in the future.
+    pub highpriority: bool, // This can be used to allow the stations to prioritize certain missions over others. For example, a mission with perishable goods might be marked as high priority, while a mission with non-urgent cargo might be low priority. This is just a simple boolean for now, but we could expand this to an enum or a priority level system if we want more granularity in the future.
     pub origin: u32,
     pub destination: u32,
     pub cargo_ids: Vec<u32>,
@@ -494,10 +507,11 @@ pub struct Mission {
 }
 
 
+
 #[derive(Debug)]
 pub enum MissionReport {
     Success(String),
-    PartialSuccess(String),
+    PartialFailure(String),
     Failure(String),
 }
 
@@ -539,7 +553,9 @@ pub enum StationCommand {
     EngineRequest { 
         requester_id: u32,
         request_id: u32, // unique ID for this specific request
+        mission_id: Option<u32>, // The mission this engine request is for, if applicable. This allows us to track which mission the request belongs to and include that information in our reporting and decision-making. It's optional because we might have some engine requests that are not tied to a specific mission, such as a station requesting an engine for general use or for a future mission that has not been fully defined yet.
         min_capacity: f64,
+        //TODO: The following mission_max_hop needs to be reconsidered: the engine will weigh less than it will once it has cargo, so the fuel requirement to get to the requesting station is not the same as the fuel requirement to complete the mission. We need to consider both legs of the journey in our engine suitability calculation, which is what
         mission_max_hop: f64, // NEW: The widest gap the engine will face BEFORE or AFTER it arrives to the requesting station. This allows the engine to consider not just whether it can get TO the requesting station, but if it can complete the requesting station's entire mission, which is the real question. An engine might be able to get to the station but then not have enough fuel to complete the next leg of the journey, so this gives us a more holistic view of whether the engine is truly suitable for the mission.
         ttl: u32,
 
@@ -553,6 +569,8 @@ pub enum StationCommand {
         station_id: u32, // The ID of the station that is offering the engine. This allows the requester to know where the engine is coming from and potentially request it from that station if they want to.
         engine: Engine,
     },
+    
+    CheckStatus, // The Alarm Clock: station sends to itself every X seconds to trigger a check of the pending missions list, which is stored locally at each station. 
 
     PrintStatus,                   // Reporting
     Terminate,                     // Graceful Shutdown

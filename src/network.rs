@@ -27,10 +27,10 @@ impl PartialOrd for RouteState {
 
 
 
-use crate::models::{Cargo, FreightOrder, Location, Mission, MissionReport, StationCommand, Train, TrainError};
-use crate::facilities::Station;
+use crate::models::{FreightOrder, Location};
+//use crate::facilities::Station;
 //use std::collections::HashMap;
-use std::sync::mpsc::{self, Sender};
+//use std::sync::mpsc::{};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -44,28 +44,19 @@ const BOLD: &str = "\x1b[1m";
 
 pub struct GlobalLedger {
     pub pending_cargo: Vec<FreightOrder>,
-    pub active_missions: Vec<Mission>,
-    pub next_mission_id: u32,
+    //pub active_missions: Vec<Mission>,
+    //pub next_mission_id: u32,
 }
 
 impl GlobalLedger {
     pub fn new() -> Self {
         GlobalLedger {
             pending_cargo: Vec::new(),
-            active_missions: Vec::new(),
-            next_mission_id: 1,
+            //active_missions: Vec::new(),
+            //next_mission_id: 1,
         }
     }
 }
-
-
-
-
-
-
-
-
-
 
 
 
@@ -79,7 +70,7 @@ pub struct RailwayNetwork {
     // Maps (Origin, Destination) -> Distance in km
     tracks: HashMap<StationId, Vec<(StationId, Distance)>>,
     // We keep this purely for UI/Debugging translation, NOT for logic.
-    pub station_names: HashMap<StationId, String>,
+    //pub station_names: HashMap<StationId, String>,
     //missions: HashMap<u32, Mission>, // <-- The Source of Truth for all missions on the network
     station_locations: HashMap<u32, Location>
 }
@@ -89,7 +80,7 @@ impl RailwayNetwork {
         RailwayNetwork {
             tracks: HashMap::new(),
             //stations: HashMap::new(),
-            station_names: HashMap::new(),
+            //station_names: HashMap::new(),
             //missions: HashMap::new(),
             station_locations: HashMap::new(),
         }
@@ -137,7 +128,8 @@ impl RailwayNetwork {
 
     pub fn get_distance(&self, origin: StationId, destination: StationId) -> Option<Distance> {
         // We create a temporary tuple of StationId objects to match the HashMap key signature.
-        for v in self.tracks.get(&origin) {
+        //for v in self.tracks.get(&origin) {
+        if let Some(v) = self.tracks.get(&origin) {
             for (dest, dist) in v {
                 if *dest == destination {//dereference the reference to compare the actual value
                     return Some(*dist);//dereference the reference to return the actual value
