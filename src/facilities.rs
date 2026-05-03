@@ -11,6 +11,8 @@ use crate::models::StationCommand;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use std::time::{Duration, Instant};
+
 // (Don't forget to paste your color constants here too, or put them in a shared module later)
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -606,54 +608,100 @@ impl Station {
             println!("{BOLD}{CYAN}[{}]::Station {} is now operational and awaiting commands...{RESET}", station_name, station_id);
 
             // The station's main loop
-            for command in rx {
-                match command {
-                    StationCommand::AssembleMission { mission} => {
-                        state.handle_assemble_mission(mission);
-                    },
-                    StationCommand::ReceiveTrain {mut train, reply_to } => {
-                        state.handle_receive_train(train, reply_to);
-                    },
+            // for command in rx {
+            let mut last_hearbeat = std::time::Instant::now();
 
-                    StationCommand::HandleEmergencySOS { mission_id, destination, surviving_cars, report_to } => {
-                        state.handle_emergency_sos(mission_id, destination, surviving_cars, report_to);
-                    },
+            loop {
 
-                    StationCommand::IntakeCar { cars, reply_to } => {
-                       state.handle_intake_cars(cars, Some(reply_to));
+                match rx.recv_timeout(Duration::from_millis(50)) {
+                    Ok(command) => {
+                        // We got a command, let's handle it!
+                        println!("{BOLD}{CYAN}[{}]::Station {} received command: {:?}{RESET}", station_name, station_id, command);
+                        if !state.handle_command(command){
+                            println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
+                            break; // Exit the loop to terminate the thread
+                        }
                     },
-                    StationCommand::IntakeCargo { cargo, reply_to } => {
-                        state.handle_intake_cargo(cargo, Some(reply_to));
-                    },
-                    StationCommand::IntakeEngine { engine, reply_to } => {
-                        println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
-                        state.handle_intake_engine(engine, Some(reply_to));
+                    Err(mpsc::RecvTimeoutError::Timeout) => {},
+                    Err(e) => {
+                        // An actual error occurred with the channel (like it being disconnected), which likely means we should shut down this station thread.
+                        println!("{BOLD}{RED}[{}]::Station {}: Channel error: {:?}. Shutting down station thread.{RESET}", station_name, station_id, e);
+                        break;
                     }
-                    StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
-                        state.handle_new_neighbor(neighbor, neighbor_tx);
-                    },
-                    StationCommand::RequestEmptyCars { count } => {
-                        state.handle_request_empty_cars(count);
-                    }
-                    StationCommand::EngineRequest { requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
-                        state.handle_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
-                    }
-                    StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
-                        //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
-                    }
-                    StationCommand::CheckStatus => {// The Alarm Clock: station sends to itself every X seconds to trigger regular status checks and maintenance tasks like checking pending missions, gossiping about engines, etc.
-                        println!("{BOLD}{CYAN}[{}]::Station {}: Checking pending missions...{RESET}", station_name, station_id);
-                        state.check_pending_missions();
-                    }
-                    StationCommand::PrintStatus => {
-                        println!("{BOLD}{CYAN}[{}]::Station {}: Status Report Requested:{RESET}", station_name, station_id);
-                        state.print_status();
-                    },
-                    StationCommand::Terminate => {
-                        println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
-                        break; // Exit the loop to terminate the thread
-                    },
                 }
+
+                if last_hearbeat.elapsed() >= Duration::from_millis(500) {
+                    //println!("{BOLD}{CYAN}[{}]::Station {}: Heartbeat check...{RESET}", station_name, station_id);
+                    state.handle_heartbeat();
+                    last_hearbeat = Instant::now();
+                }
+
+
+
+
+
+                // if !state.handle_command(command){
+                //     println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
+                //     break; // Exit the loop to terminate the thread
+                // }
+
+
+
+
+
+
+
+
+
+
+
+                // match command {
+                //     StationCommand::AssembleMission { mission} => {
+                //         state.handle_assemble_mission(mission);
+                //     },
+                //     StationCommand::ReceiveTrain {mut train, reply_to } => {
+                //         state.handle_receive_train(train, reply_to);
+                //     },
+
+                //     StationCommand::HandleEmergencySOS { mission_id, destination, surviving_cars, report_to } => {
+                //         state.handle_emergency_sos(mission_id, destination, surviving_cars, report_to);
+                //     },
+
+                //     StationCommand::IntakeCar { cars, reply_to } => {
+                //        state.handle_intake_cars(cars, Some(reply_to));
+                //     },
+                //     StationCommand::IntakeCargo { cargo, reply_to } => {
+                //         state.handle_intake_cargo(cargo, Some(reply_to));
+                //     },
+                //     StationCommand::IntakeEngine { engine, reply_to } => {
+                //         println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
+                //         state.handle_intake_engine(engine, Some(reply_to));
+                //     }
+                //     StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
+                //         state.handle_new_neighbor(neighbor, neighbor_tx);
+                //     },
+                //     StationCommand::RequestEmptyCars { count } => {
+                //         state.handle_request_empty_cars(count);
+                //     }
+                //     StationCommand::EngineRequest { requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
+                //         state.handle_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+                //     }
+                //     StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
+                //         //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
+                //     }
+                //     StationCommand::CheckStatus => {// The Alarm Clock: station sends to itself every X seconds to trigger regular status checks and maintenance tasks like checking pending missions, gossiping about engines, etc.
+                //         println!("{BOLD}{CYAN}[{}]::Station {}: Checking pending missions...{RESET}", station_name, station_id);
+                //         state.check_pending_missions();
+                //     }
+                //     StationCommand::PrintStatus => {
+                //         println!("{BOLD}{CYAN}[{}]::Station {}: Status Report Requested:{RESET}", station_name, station_id);
+                //         state.print_status();
+                //     },
+                //     StationCommand::Terminate => {
+                //         println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
+                //         break; // Exit the loop to terminate the thread
+                //     },
+                // }
 
             }
         });
@@ -706,6 +754,135 @@ impl StationState {
             pending_missions: Vec::new(),
         }
     }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    fn handle_command(&mut self, command: StationCommand) -> bool { // Return false if this command is a Terminate command, so the station thread knows to shut down
+        match command {
+
+            StationCommand::Beat => {
+                self.handle_heartbeat();
+                true
+            }
+
+            StationCommand::AssembleMission { mission } => {
+                self.handle_assemble_mission(mission);
+                true
+            }
+
+            StationCommand::ReceiveTrain { train, reply_to } => {
+                self.handle_receive_train(train, reply_to);
+                true
+            }
+
+            StationCommand::HandleEmergencySOS { mission_id, destination, surviving_cars, report_to } => {
+                self.handle_emergency_sos(mission_id, destination, surviving_cars, report_to);
+                true
+            }
+
+            StationCommand::IntakeCar { cars, reply_to } => {
+                self.handle_intake_cars(cars, Some(reply_to));
+                true
+            }
+
+            StationCommand::IntakeCargo { cargo, reply_to } => {
+                self.handle_intake_cargo(cargo, Some(reply_to));
+                true
+            }
+
+            StationCommand::IntakeEngine { engine, reply_to } => {
+                println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", self.name);
+                self.handle_intake_engine(engine, Some(reply_to));
+                true
+            }
+
+            StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
+                self.handle_new_neighbor(neighbor, neighbor_tx);
+                true
+            }
+
+            StationCommand::RequestEmptyCars { count } => {
+                self.handle_request_empty_cars(count);
+                true
+            }
+
+            StationCommand::EngineRequest {
+                requester_id,
+                request_id,
+                mission_id,
+                min_capacity,
+                mission_max_hop,
+                ttl,
+                branch_notified,
+                notified_count,
+            } => {
+                self.handle_engine_request(
+                    requester_id,
+                    request_id,
+                    mission_id,
+                    min_capacity,
+                    mission_max_hop,
+                    ttl,
+                    branch_notified,
+                    notified_count,
+                );
+                true
+            }
+
+            StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
+                //self.handle_engine_request_response(request_id, station_id, engine);
+                true
+            }
+
+            StationCommand::CheckStatus => {
+                self.check_pending_missions();
+                true
+            }
+
+            StationCommand::PrintStatus => {
+                self.print_status();
+                true
+            }
+
+            StationCommand::Terminate => {
+                return false; // Signal to terminate the station thread
+            }
+
+        }
+    }
+
+
+    pub fn handle_heartbeat(&mut self) {
+        println!("{BOLD}{CYAN}[{}]::Station {}: Heartbeat check...{RESET}", self.name, self.id);
+        // Here we can perform regular maintenance tasks like checking pending missions, gossiping about engines, etc.
+        if self.pending_missions.is_empty() {
+            return;
+        }
+
+        println!("{BOLD}{CYAN}[{}]::Station {}: Checking {} pending missions...{RESET}", self.name, self.id, self.pending_missions.len());
+
+        self.check_pending_missions();
+    }
+
+
+
+
+
+
+
+
+
 
 
     // The VIP Pass is `&mut self`. This allows the method to open its own briefcase!

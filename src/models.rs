@@ -518,6 +518,7 @@ pub enum MissionReport {
 
 #[derive(Debug)]
 pub enum StationCommand {
+    Beat, // The Heartbeat: a regular tick that triggers the station to check its pending missions and take action. This is important for keeping the station's internal logic moving forward, such as checking for mission timeouts, re-evaluating pending missions, and generally keeping the station "alive" and responsive.
     AssembleMission {
         mission: Mission,
     },
