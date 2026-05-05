@@ -4,6 +4,9 @@ use core::error;
 use std::collections::{HashMap, HashSet, VecDeque};
 use rand::Rng;
 
+//use tokio::sync::mpsc::{self, Sender, Receiver};
+//use tokio::time::{interval, Duration, Instant};
+
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Sender, Receiver};
 use std::thread;
@@ -638,71 +641,6 @@ impl Station {
 
 
 
-
-
-                // if !state.handle_command(command){
-                //     println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
-                //     break; // Exit the loop to terminate the thread
-                // }
-
-
-
-
-
-
-
-
-
-
-
-                // match command {
-                //     StationCommand::AssembleMission { mission} => {
-                //         state.handle_assemble_mission(mission);
-                //     },
-                //     StationCommand::ReceiveTrain {mut train, reply_to } => {
-                //         state.handle_receive_train(train, reply_to);
-                //     },
-
-                //     StationCommand::HandleEmergencySOS { mission_id, destination, surviving_cars, report_to } => {
-                //         state.handle_emergency_sos(mission_id, destination, surviving_cars, report_to);
-                //     },
-
-                //     StationCommand::IntakeCar { cars, reply_to } => {
-                //        state.handle_intake_cars(cars, Some(reply_to));
-                //     },
-                //     StationCommand::IntakeCargo { cargo, reply_to } => {
-                //         state.handle_intake_cargo(cargo, Some(reply_to));
-                //     },
-                //     StationCommand::IntakeEngine { engine, reply_to } => {
-                //         println!("{BOLD}{CYAN}[{}] Received command to intake a new engine into the roundhouse.{RESET}", station_name);
-                //         state.handle_intake_engine(engine, Some(reply_to));
-                //     }
-                //     StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
-                //         state.handle_new_neighbor(neighbor, neighbor_tx);
-                //     },
-                //     StationCommand::RequestEmptyCars { count } => {
-                //         state.handle_request_empty_cars(count);
-                //     }
-                //     StationCommand::EngineRequest { requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count } => {
-                //         state.handle_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
-                //     }
-                //     StationCommand::EngineRequestResponse { request_id, station_id, engine } => {
-                //         //TODO: We need to know which mission this is for so we can route the engine to the right place once we get it. We can add that to the command if needed.
-                //     }
-                //     StationCommand::CheckStatus => {// The Alarm Clock: station sends to itself every X seconds to trigger regular status checks and maintenance tasks like checking pending missions, gossiping about engines, etc.
-                //         println!("{BOLD}{CYAN}[{}]::Station {}: Checking pending missions...{RESET}", station_name, station_id);
-                //         state.check_pending_missions();
-                //     }
-                //     StationCommand::PrintStatus => {
-                //         println!("{BOLD}{CYAN}[{}]::Station {}: Status Report Requested:{RESET}", station_name, station_id);
-                //         state.print_status();
-                //     },
-                //     StationCommand::Terminate => {
-                //         println!("{BOLD}{RED}[{}]::Station {}: Termination command received. Shutting down station thread.{RESET}", station_name, station_id);
-                //         break; // Exit the loop to terminate the thread
-                //     },
-                // }
-
             }
         });
         
@@ -754,15 +692,6 @@ impl StationState {
             pending_missions: Vec::new(),
         }
     }
-
-
-
-
-
-
-
-
-
 
 
 
@@ -874,13 +803,6 @@ impl StationState {
 
         self.check_pending_missions();
     }
-
-
-
-
-
-
-
 
 
 
@@ -1015,20 +937,6 @@ impl StationState {
 
                 self.initiate_engine_request(self.id, request_id, Some(mission_id), true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
 
-                // for neighbor in self.neighbors.values() {
-                //     match neighbor.send(StationCommand::EngineRequest { 
-                //         requester_id: self.id, 
-                        
-                //         min_capacity: true_total_weight as f64, 
-                //         mission_max_hop: max_hop_distance, 
-                //         ttl: 3 // We can set a TTL to prevent infinite loops of requests between stations
-                //         b
-                //     }) {
-                //         Ok(_) => println!("{YELLOW}[{}] Sent engine request to neighbor due to lack of suitable engines for Mission {}.{RESET}", self.name, mission.id),
-                //         Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send engine request to neighbor for mission {}. Error: {:?}{RESET}", self.name, mission.id, e),
-                //     }
-                // }
-
 
                 return;
             }
@@ -1052,23 +960,6 @@ impl StationState {
                 println!("{RED}Yard Error: Failed to assemble cars for Mission {}: {:?}.{RESET}", mission.id, e);
                 // Since we already took the engine out of the roundhouse, we need to return it back to avoid losing it due to a failed assembly!
                 self.roundhouse.house(engine);
-                // if reply_to.send(Err(e)).is_err() {
-                //     println!("{RED}[{}] DEAD-LETTER: Failed to send assembly failure for mission {} due to car assembly error.{RESET}", self.name, mission.id);
-                // }
-                
-                
-                // match mission.reply_channel {
-                //     Some(sender) => {
-                //         let report = MissionReport::Failure(format!(
-                //             "Mission {} failed during assembly: {:?}",
-                //             mission.id, e
-                //         ));
-                //         let _ = sender.send(report);
-                //     },
-                //     None => {
-                //         println!("{RED}[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to car assembly error.{RESET}", self.name, mission.id);
-                //     }
-                // }
                 let details = "Failed to assemble cars for the mission. This indicates that there was an issue during the process of preparing the train cars for departure, which is critical for the successful execution of the mission. Please investigate the yard's assembly process and ensure that all necessary resources and procedures are in place for upcoming missions.";
                 self.report_mission_failure(&mission, details);
 
@@ -1083,6 +974,7 @@ impl StationState {
             engine,
             cars: attached_cars,
             mission_id: Some(mission.id), // We can include the whole mission in the train for easy access to all its details during transit and at the destination, which will be helpful for reporting and any potential issues that arise during the journey.
+            request_id: None, // This will be filled in if this train is the result of an engine request to another station
             destination: mission.destination.clone(),
             report_to: mission.reply_channel.clone(),
         };
@@ -1139,20 +1031,7 @@ pub fn retry_pending_missions(&mut self) {
 
             
 
-
-
-            // let still_pending:Vec<Mission> = self.pending_missions.drain().collect(); // We can drain the pending missions and attempt to retry them now that we've freed up the engine and cars from this completed mission. This is a simple way to implement a retry mechanism for missions that were waiting on resources that are now available. We can also add some logic to prevent infinite retries or to prioritize certain missions if needed.
-            // for mission in still_pending {
-            //     println!("{YELLOW}[{}]::Station {}: Retrying pending Mission {} after successful completion of Train {}.{RESET}", self.name, self.id, mission.id, id);
-
-            // }
-
-            self.retry_pending_missions();
-
-
-
-
-
+            self.check_pending_missions();
 
 
 
@@ -1192,15 +1071,6 @@ pub fn retry_pending_missions(&mut self) {
                     if reply_to.send(Err(error)).is_err() {
                         println!("{RED}[{}] DEAD-LETTER: Failed to send transit failure for Train {} due to unreachable destination.{RESET}", self.name, train.id);
                     }
-                    // if let Some(sender) = train.report_to {
-                    //     let reason = "Failed at the None arm of the Dijkstra check";
-                    //     self.send_failure_report(mission_id, reason, &sender);
-                    //     // let report = MissionReport::Failure(format!(
-                    //     //     "Train {} failed to reach final destination {} because it is unreachable from {}.",
-                    //     //     train.id, final_destination, self.name
-                    //     // ));
-                    //     // let _ = sender.send(report);
-                    // }
                     let reason = "Failed at the None arm of the Dijkstra check";
                     self.send_failure_report(train.mission_id.expect("This is a failure report; There should be a mission_id on this train!"), reason, train.report_to);
                     return;
@@ -1211,7 +1081,6 @@ pub fn retry_pending_missions(&mut self) {
     }
 
     // This is the method we call when a train arrives with an SOS from a failed mission. The engine is lost, but some or all of the cars survive and make it to the station. We need to process those cars, report on the situation, and then dispatch a replacement train to fulfill the original mission if possible.
-    // Destination is critical for this method, because the original mission's destination may now be unreachable due to the emergency, so we need to update the mission with a new destination (this station) for the replacement train, and then rely on the network's routing logic to find a new path from this station to the original destination that avoids whatever caused the emergency in the first place.
     pub fn handle_emergency_sos(&mut self, mission_id: u32, destination: u32, surviving_cars: Vec<TrainCar>, report_to: Option<Sender<MissionReport>>) {
         println!("{RED}[{}] 🚨 EMERGENCY: Processing SOS for Mission {}.{RESET}", self.name, mission_id);
         
@@ -1408,6 +1277,7 @@ pub fn retry_pending_missions(&mut self) {
                         engine,
                         cars: Vec::new(),
                         mission_id,
+                        request_id: Some(request_id),
                         destination: requester_id,
                         report_to: None,
                     };
@@ -1535,34 +1405,6 @@ pub fn retry_pending_missions(&mut self) {
         let base_ttl = ttl/ chosen_candidates.len() as u32; // First, we calculate the base TTL for each neighbor.
         let ttl_remainder = ttl % chosen_candidates.len() as u32; // We also calculate the remainder of the TTL division, which we will distribute to the first few neighbors of the shuffled valid candidates to simulate randomness in TTL assignment.
 
-        // for chosen_id in chosen_candidates {
-        //     println!("{YELLOW} [{}]: Forwarding engine request to neighbor {} with base TTL {} and remainder TTL {} for request from Station {}.{RESET}", self.name, chosen_id, base_ttl, ttl_remainder, requester_id);
-        //     let assigned_ttl = if ttl_remainder > 0 {
-        //         ttl_remainder -= 1;
-        //         base_ttl + 1
-        //     } else {
-        //         base_ttl
-        //     };
-
-        //     match self.neighbors.get(&chosen_id) {
-        //         Some(neighbor) => {
-        //             match neighbor.send(StationCommand::EngineRequest { 
-        //                 requester_id, 
-        //                 request_id,
-        //                 min_capacity, 
-        //                 mission_max_hop, 
-        //                 ttl: assigned_ttl,
-        //                 branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
-        //                 notified_count: next_notified_count, // We also forward the updated count of how many neighbors have been notified so far.
-        //             }) {
-        //                 Ok(_) => println!("{YELLOW}[{}] Forwarded engine request to neighbor {} due to insufficient engines for request from Station {}.{RESET}", self.name, chosen_id, requester_id),
-        //                 Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to forward engine request to neighbor {} for Station {}. Error: {:?}{RESET}", self.name, chosen_id, requester_id, e),
-        //             }
-        //         },
-        //         None => println!("{RED}Network Error: Neighbor {} not found in neighbors list of Station {}. Cannot forward engine request.{RESET}", chosen_id, self.name),
-        //     }       
-        // }
-
 
         for (i, &chosen_id) in chosen_candidates.iter().enumerate() {
             //First, everyone gets the same base TTL, and then we distribute the remainder TTL to the first few neighbors in the shuffled list to add some randomness to the TTL assignment.
@@ -1671,16 +1513,53 @@ pub fn retry_pending_missions(&mut self) {
             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
             let tree_falls = rand::thread_rng().gen_bool(0.1);
             if tree_falls {
-                println!("{RED}🚨 DERAILMENT: Train {}!{RESET}", train_id);
+                
 
-                // We send an SOS command BACK to the Station's main mailbox!
-                // (You will need to pass a clone of the Station's own Sender into the thread)
-                station_tx_clone.send(StationCommand::HandleEmergencySOS {
-                    mission_id: train.mission_id.unwrap_or(0),
-                    destination: train.destination,
-                    surviving_cars: train.cars, // The train dies, but the cars live!
-                    report_to: train.report_to,
-                }).expect("SOS failed");
+                if let Some(request_id) = train.request_id {
+                    println!("{RED}🚨 DERAILMENT: Emergency engine transfer Train {}!{RESET} for engine request {} for mission {}. No cargo to salvage.{RESET}", train_id, request_id, train.mission_id.unwrap_or(0));
+                } else if let Some(mission_id) = train.mission_id {
+                    if !train.cars.is_empty() {
+                        println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for mission {}. Salvaging surviving cars...{RESET}", train_id, mission_id);
+
+                        station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                            mission_id,
+                            destination: train.destination,
+                            surviving_cars: train.cars,
+                            report_to: train.report_to,
+                        }).expect("SOS failed");
+                    }
+                }
+
+
+                // if let Some(mission_id) = train.mission_id {
+                //     if !train.cars.is_empty() {
+                //         println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for mission {}", train_id, mission_id);
+
+                //         station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                //             mission_id,
+                //             destination: train.destination,
+                //             surviving_cars: train.cars,
+                //             report_to: train.report_to,
+                //         }).expect("SOS failed");
+                //     } else {
+                //         println!(
+                //             "{RED}🚨 DERAILMENT: Emergency engine transfer Train {} lost on request {}. No cargo to salvage.{RESET}",
+                //             train_id, train.request_id.unwrap_or(0)
+                //         );
+                //     }
+                // }
+
+
+                // if let Some(request_id) = train.request_id {
+                //     println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for engine request {}", train_id, request_id);
+                //     // We can also send an SOS for engine requests, but since there is no mission to report back to, we will just log the derailment and return the surviving cars to the yard without sending a MissionReport.
+                //     station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                //         mission_id: 0, // We can use a mission_id of 0 or some other sentinel value to indicate that this SOS is not related to a specific mission, since engine requests don't have mission IDs. The handling logic can check for this and know that it doesn't need to send a MissionReport back to a mission reply channel.
+                //         destination: train.destination,
+                //         surviving_cars: train.cars, // The train dies, but the cars live!
+                //         report_to: None, // No mission report needed for engine request derailments since there is no mission to report back to.
+                //     }).expect("SOS failed");
+                // }
 
                 return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
             } else {
