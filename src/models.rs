@@ -126,20 +126,24 @@ impl Producer {
                 
                 // 3. Now check all active missions to see if any reports came back
                 let mut still_monitoring = Vec::new();
-                for (rx, mut order) in active_monitors {
+                for (rx, order) in active_monitors {
                     match rx.try_recv() {
                         Ok(MissionReport::Success(details)) => println!("{GREEN} Producer {} success: {}", self.id, details),
                         Ok(MissionReport::PartialFailure(details)) => {
                             println!("{YELLOW} Producer {} partial failure: {}", self.id, details);
                         }
                         Ok(MissionReport::Failure(details)) => { 
+                            // Producer is now observer-only for failures; station-side recovery owns retries.
+                            // This prevents duplicate dispatches when stations already keep pending missions.
                             println!("{RED} Producer {} failure: {}", self.id, details);
-                            // Optionally, we could reinsert the freight order back into the ledger here if we want to retry it later
-                            let mut ledger_access = self.ledger.lock().unwrap();
-                            order.ttl -= 1; // Decrement the TTL for this order since it failed. 
-                            if order.ttl > 0 {
-                                ledger_access.pending_cargo.push(order);
-                            }
+                            
+                            // // Optionally, we could reinsert the freight order back into the ledger here if we want to retry it later
+                            // let mut ledger_access = self.ledger.lock().unwrap();
+                            // order.ttl -= 1; // Decrement the TTL for this order since it failed. 
+                            // if order.ttl > 0 {
+                            //     ledger_access.pending_cargo.push(order);
+                            // }
+                            println!("{YELLOW} Producer {} will not requeue mission {}. Station-side recovery is authoritative.{RESET}", self.id, order.id);
                         }
                         Err(mpsc::TryRecvError::Empty) => {
                             // No report yet, keep monitoring
@@ -217,7 +221,7 @@ impl Cargo {
 pub struct RejectedAsset {
     pub car: TrainCar,
     pub issue: Vec<TrainError>,
-    pub timestamp: u64, // When did it fail? How to impement this? A counter?
+    pub timestamp: u64, // When did it fail?
     pub source_mission: Option<u32>, // Where did it come from? Mission ID, or None?
 }
 
@@ -248,27 +252,36 @@ pub enum EngineType {
 impl EngineType {
     pub fn max_capacity(&self) -> f64 {
         match self {
-            EngineType::Percy => 5000.0,
-            EngineType::Thomas => 15000.0,
-            EngineType::Gordon => 50000.0,
-            EngineType::Diesel => 20000.0,
+            EngineType::Percy => 6000.0,
+            EngineType::Thomas => 16500.0,
+            EngineType::Gordon => 53000.0,
+            EngineType::Diesel => 22000.0,
+        }
+    }
+
+    pub fn weight(&self) -> f64 {
+        match self {
+            EngineType::Percy => 1000.0,
+            EngineType::Thomas => 1500.0,
+            EngineType::Gordon => 3000.0,
+            EngineType::Diesel => 2000.0,
         }
     }
 
     pub fn ideal_min_capacity(&self) -> f64 {
         match self {
-            EngineType::Percy => 0000.0,
-            EngineType::Thomas => 0000.0,
-            EngineType::Gordon => 15000.0,
-            EngineType::Diesel => 5000.0,
+            EngineType::Percy => 0.0,
+            EngineType::Thomas => 2500.0,
+            EngineType::Gordon => 19500.0,
+            EngineType::Diesel => 8000.0,
         }
     }
     
     pub fn max_fuel_capacity(&self) -> f32 {
         // Let's assume these units are 'Liters' or 'Kilograms of Coal'
         match self {
-            EngineType::Percy => 1000.0,
-            EngineType::Thomas => 2000.0,
+            EngineType::Percy => 1500.0,
+            EngineType::Thomas => 2500.0,
             EngineType::Diesel => 3000.0,
             EngineType::Gordon => 5000.0,
         }
@@ -279,8 +292,8 @@ impl EngineType {
         // A Diesel might get 5.0 km/kg of fuel per ton.
         // A Thomas (Steam) might only get 2.5 km/kg.
         match self {
-            EngineType::Diesel => 0.50, // Devious, but extremely efficient
-            EngineType::Percy => 0.30, //  Smart and efficient, but not the strongest
+            EngineType::Diesel => 0.60, // Devious, but extremely efficient
+            EngineType::Percy => 0.35, //  Smart and efficient, but not the strongest
             EngineType::Thomas => 0.25, // Classic, Jack of all trades
             EngineType::Gordon => 0.18, // Powerful, but a gas guzzler
         }
@@ -344,14 +357,18 @@ impl Engine {
         work / quotient
     }
 
-    pub fn is_ideal_for_mission(&self, weight: f64) -> bool {
+    pub fn is_ideal_for_mission(&self, freight_weight: u32) -> bool {
+        let projected_train_weight = freight_weight as f64 + self.engine_type.weight(); // We want to consider the weight of the engine itself in our fuel calculations.
         let capacity = self.engine_type.max_capacity();
         let ideal_min = self.engine_type.ideal_min_capacity();
-        weight > ideal_min && weight <= capacity
+        projected_train_weight > ideal_min && projected_train_weight <= capacity
     }
 
-    pub fn can_complete_mission(&self, weight: f64, distance: f64) -> bool {
-        let needed = self.calculate_fuel_requirement(weight, distance);
+    pub fn can_complete_mission(&self, freight_weight: u32, distance: f64) -> bool {
+
+        let projected_train_weight = freight_weight as f64 + self.engine_type.weight(); // We want to consider the weight of the engine itself in our fuel calculations.
+
+        let needed = self.calculate_fuel_requirement(projected_train_weight, distance);
         
         if needed > self.current_fuel {
             println!("{RED}Mission Impossible: Engine {} needs {:.1} fuel, has {:.1} fuel{RESET}", self.id, needed, self.current_fuel);
@@ -362,15 +379,16 @@ impl Engine {
         }
     }
 
-    pub fn burn_fuel(&mut self, weight: f64, distance: f64) -> Result<(), TrainError> {
-        let needed = self.calculate_fuel_requirement(weight, distance);
+    pub fn burn_fuel(&mut self, freight_weight: f64, distance: f64) -> Result<(), TrainError> {
+        let projected_train_weight = freight_weight + self.engine_type.weight(); // Consider the weight of the engine itself in our fuel calculations.
+        let needed = self.calculate_fuel_requirement(projected_train_weight, distance);
         if needed > self.current_fuel {
             Err(TrainError::MissionImpossible {
                 reason: format!("Engine {} needs {:.1} fuel, has {:.1} fuel", self.id, needed, self.current_fuel),
             })
         } else {
             self.current_fuel -= needed;
-            println!("{YELLOW}Engine {} consumed {:.1} fuel. Tank: {:.1}{RESET}", self.id, needed, self.current_fuel);
+            println!("{YELLOW}Engine {} consumed {:.1} fuel at projected train weight {:.1}. Tank: {:.1}{RESET}", self.id, needed, projected_train_weight, self.current_fuel);
             Ok(())
         }
     }
@@ -450,11 +468,11 @@ impl Train {
         println!("Train {}::Engine {} is departing for ({}km)...", self.id, self.engine.id, distance_to_next_stop);
         
         // 1. Calculate the final weight
-        let total_weight = self.calculate_gross_weight(); // Convert to u32 for fuel calculation. In a real system, we would want to be careful about potential overflows here and might want to use a larger integer type or a different approach to weight management.
+        let freight_weight = self.calculate_gross_weight(); // Convert to u32 for fuel calculation. In a real system, we would want to be careful about potential overflows here and might want to use a larger integer type or a different approach to weight management.
         let speed = self.engine.engine_type.speed() as f64;
         
         // 2. The Consequence
-        self.engine.burn_fuel(total_weight, distance_to_next_stop)?;
+        self.engine.burn_fuel(freight_weight, distance_to_next_stop)?;
         
 
         Ok(distance_to_next_stop / speed) // Return the estimated time to next stop based on speed
@@ -554,11 +572,12 @@ pub enum StationCommand {
     },
     EngineRequest { 
         requester_id: u32,
+        forwarder_id: u32, // The station that forwarded this request to us. This allows us to know where the request came from, and to all each station to trace its distance and path backwards.
         request_id: u32, // unique ID for this specific request
         mission_id: Option<u32>, // The mission this engine request is for, if applicable. This allows us to track which mission the request belongs to and include that information in our reporting and decision-making. It's optional because we might have some engine requests that are not tied to a specific mission, such as a station requesting an engine for general use or for a future mission that has not been fully defined yet.
-        min_capacity: f64,
-        //TODO: The following mission_max_hop needs to be reconsidered: the engine will weigh less than it will once it has cargo, so the fuel requirement to get to the requesting station is not the same as the fuel requirement to complete the mission. We need to consider both legs of the journey in our engine suitability calculation, which is what
-        mission_max_hop: f64, // NEW: The widest gap the engine will face BEFORE or AFTER it arrives to the requesting station. This allows the engine to consider not just whether it can get TO the requesting station, but if it can complete the requesting station's entire mission, which is the real question. An engine might be able to get to the station but then not have enough fuel to complete the next leg of the journey, so this gives us a more holistic view of whether the engine is truly suitable for the mission.
+        min_capacity: u32, // The minimum cargo weight that the engine needs to be able to handle. This allows the station to filter out engines that are too weak for the mission right from the start, which saves time and resources by not sending requests to stations that can't possibly fulfill them.
+        max_hop_to_requester: f64, // The longest hop along the route to the requester, which is the distance the engine would have to travel empty to get to the cargo.
+        mission_max_hop: f64, // NEW: The widest gap the engine will face BEFORE or AFTER it arrives to the requesting station. This allows the engine to consider not just whether it can get TO the requesting station, but if it can complete the requesting station's entire mission, which is the real question.
         ttl: u32,
 
         // THE FIX: A fixed-size array and a counter.

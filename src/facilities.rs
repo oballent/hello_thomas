@@ -2,6 +2,7 @@ use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset,
 use crate::network::{GlobalLedger, RailwayNetwork};
 use core::error;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::f32::MAX_10_EXP;
 use rand::Rng;
 
 //use tokio::sync::mpsc::{self, Sender, Receiver};
@@ -387,7 +388,7 @@ impl Roundhouse {
     }
 
 
-    pub fn check_suitable_engine(&self, total_weight: f64, distance_km: f64) -> Option<&Engine> {
+    pub fn check_suitable_engine(&self, total_weight: u32, distance_km: f64) -> Option<&Engine> {
         // We check each stall in order of engine strength
         let roster = [
             EngineType::Percy, 
@@ -408,8 +409,8 @@ impl Roundhouse {
         None // If we loop through the whole roster and find nothing, return None.
     }
 
-    // Create a method that tells us only if we possess an engine perfect in strenght, not too weak, not too strong, just right. This is for the "Goldilocks" gossip strategy where we only want to ask for help if we don't have the perfect engine in our own roundhouse.
-    pub fn check_ideal_engine(&self, total_weight: f64, distance_km: f64) -> Option<&Engine> {
+    // Create a method that tells us only if we possess an engine perfect in strength, not too weak, not too strong, just right. This is for the "Goldilocks" gossip strategy where we only want to ask for help if we don't have the perfect engine in our own roundhouse.
+    pub fn check_ideal_engine(&self, total_weight: u32, distance_km: f64) -> Option<&Engine> {
         // We check each stall in order of engine strength
         let roster = [
             EngineType::Percy, 
@@ -433,9 +434,18 @@ impl Roundhouse {
         None // If we loop through the whole roster and find nothing, return None.
     }
 
-    pub fn find_suitable_engine(&mut self, total_weight: f64, distance_km: f64) -> Result<Engine, TrainError> {
-        
-        // 1. The Escalation Roster (Weakest to Strongest)
+
+
+
+
+    // Create a method that tells us if we have ANY engine that can fulfill the request and complete the mission
+    pub fn find_can_fulfill_request(& self, max_hop_to_requester: f64, total_weight: u32, max_hop_to_destination: f64) -> Option<u32> {
+        // We check each stall in order of engine strength in order to find the id of an engine that can fulfill a request for help and complete the mission. This is for the "Swarm" gossip strategy where we ask for help from any station that has an engine that can complete the whole mission, even if it's not a perfect match for the weight. 
+
+        println!("{BOLD}{YELLOW}Roundhouse {}: Checking for any engines that can travel {}km to requester and then complete mission of {}kg over {}km...{RESET}", self.id, max_hop_to_requester, total_weight, max_hop_to_destination);
+
+
+
         let roster = [
             EngineType::Percy, 
             EngineType::Thomas, 
@@ -443,35 +453,93 @@ impl Roundhouse {
             EngineType::Gordon
         ];
 
-        // 2. Iterate through the roster in order
         for etype in roster {
-            // Check if this TYPE is physically strong enough
-            if etype.max_capacity() >= total_weight {
-                println!("{YELLOW}Roundhouse {}: Checking for available {:?} engines...{RESET}", self.id, etype);
-                
-                // If it is, look inside that specific stall
-                if let Some(queue) = self.stalls.get_mut(&etype) {
-                    
-                    // 1. Find the position of the first capable engine
-                    let winner_index = queue.iter().position(|engine| {
-                        engine.can_complete_mission(total_weight, distance_km)
-                    });
-
-                    // 2. Chain it using the `.and_then()` you love!
-                    // If position returned Some(index), and_then passes that index into queue.remove()
-                    if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
-                        println!("{GREEN}Roundhouse {}: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", self.id, engine.id, engine.engine_type, total_weight, distance_km);
-                        return Ok(engine);
+            if let Some(queue) = self.stalls.get(&etype) {
+                for engine in queue {
+                    //first, can the engine make it to the requester to pick up the cargo? The engine will only need to worry about its own weight
+                    if engine.can_complete_mission(0, max_hop_to_requester) {
+                        // If it can make it to the requester, can it also complete the mission with the cargo?
+                        if engine.can_complete_mission(total_weight, max_hop_to_destination) {
+                            return Some(engine.id);
+                        }
                     }
                 }
-
             }
         }
-        
-        // If we loop through the whole roster and find nothing, return an error.
-        println!("{RED}Roundhouse {}: No suitable engines available for mission ({}kg over {}km).{RESET}", self.id, total_weight, distance_km);
-        Err(TrainError::MissionImpossible { reason: "NO ENGINES CAN COMPLETE MISSION!".to_string() })
+        None // If no suitable engine is found, return None
     }
+
+    // Create a method that allows us to select an engine by its ID
+    pub fn select_engine_by_id(&mut self, engine_id: u32) -> Option<Engine> {
+        for queue in self.stalls.values_mut() {
+            if let Some(pos) = queue.iter().position(|e| e.id == engine_id) {
+                return Some(queue.remove(pos).unwrap());
+            }
+        }
+        None // If no engine with the specified ID is found, return None
+    }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
+    // pub fn find_suitable_engine(&mut self, total_weight: f64, distance_km: f64) -> Result<Engine, TrainError> {
+        
+    //     // 1. The Escalation Roster (Weakest to Strongest)
+    //     let roster = [
+    //         EngineType::Percy, 
+    //         EngineType::Thomas, 
+    //         EngineType::Diesel, 
+    //         EngineType::Gordon
+    //     ];
+
+    //     // 2. Iterate through the roster in order
+    //     for etype in roster {
+    //         // Check if this TYPE is physically strong enough
+    //         if etype.max_capacity() >= total_weight {
+    //             println!("{YELLOW}Roundhouse {}: Checking for available {:?} engines...{RESET}", self.id, etype);
+                
+    //             // If it is, look inside that specific stall
+    //             if let Some(queue) = self.stalls.get_mut(&etype) {
+                    
+    //                 // 1. Find the position of the first capable engine
+    //                 let winner_index = queue.iter().position(|engine| {
+    //                     engine.can_complete_mission(total_weight, distance_km)
+    //                 });
+
+    //                 // 2. Chain it using the `.and_then()` you love!
+    //                 // If position returned Some(index), and_then passes that index into queue.remove()
+    //                 if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
+    //                     println!("{GREEN}Roundhouse {}: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", self.id, engine.id, engine.engine_type, total_weight, distance_km);
+    //                     return Ok(engine);
+    //                 }
+    //             }
+
+    //         }
+    //     }
+        
+    //     // If we loop through the whole roster and find nothing, return an error.
+    //     println!("{RED}Roundhouse {}: No suitable engines available for mission ({}kg over {}km).{RESET}", self.id, total_weight, distance_km);
+    //     Err(TrainError::MissionImpossible { reason: "NO ENGINES CAN COMPLETE MISSION!".to_string() })
+    // }
 }
 
 
@@ -748,9 +816,11 @@ impl StationState {
 
             StationCommand::EngineRequest {
                 requester_id,
+                forwarder_id,
                 request_id,
                 mission_id,
                 min_capacity,
+                max_hop_to_requester,
                 mission_max_hop,
                 ttl,
                 branch_notified,
@@ -758,9 +828,11 @@ impl StationState {
             } => {
                 self.handle_engine_request(
                     requester_id,
+                    forwarder_id,
                     request_id,
                     mission_id,
                     min_capacity,
+                    max_hop_to_requester, // The longest hop along the route to the requester, which is the distance the engine would have to travel empty to get to the cargo. 
                     mission_max_hop,
                     ttl,
                     branch_notified,
@@ -889,22 +961,27 @@ impl StationState {
         match self.yard.validate_empty_cars(&mission) {
             true => println!("{GREEN}Yard: Validation successful for Mission {}. Enough empty cars available.{RESET}", mission.id),
             false => {
+                // Recoverable shortage: request local replenishment and retry from pending_missions.
+                // We only report failure if the replenishment request itself cannot be sent.
                 println!("{RED}Yard Error: Validation failed for Mission {}. Not enough empty cars available.{RESET}", mission.id);
-                //let error = TrainError::MissionImpossible { reason: "Not enough empty cars available".to_string() };
-                let details = "Not enough empty cars available for the mission. This indicates a shortage in the yard's inventory of empty cars, which is critical for assembling the train. Please investigate the yard's inventory and ensure that sufficient empty cars are available for upcoming missions.";
-
-                
-                // self.tx.send(StationCommand::RequestEmptyCars { count: mission.cargo_ids.len() as u32 }).unwrap_or_else(|e| {
-                //     println!("{RED}[{}] DEAD-LETTER: Failed to send request for empty cars for mission {} due to yard validation failure.{RESET}", self.name, mission.id);
-                // });
-                match self.tx.send(StationCommand::RequestEmptyCars { count: mission.cargo_ids.len() as u32 }) {
-                    Ok(_) => println!("{YELLOW}[{}]::Station {}: Sent request for {} empty cars to yard due to validation failure for Mission {}.{RESET}", self.name, self.id, mission.cargo_ids.len(), mission.id),
-                    Err(e) => println!("{RED}[{}] DEAD-LETTER: Failed to send request for empty cars for mission {} due to yard validation failure. Error: {:?}{RESET}", self.name, mission.id, e),
+                let requested = mission.cargo_ids.len() as u32;
+                match self.tx.send(StationCommand::RequestEmptyCars { count: requested }) {
+                    Ok(_) => println!(
+                        "{YELLOW}[{}]::Station {}: Requested {} empty cars and deferred Mission {} for local retry.{RESET}",
+                        self.name, self.id, requested, mission.id
+                    ),
+                    Err(e) => {
+                        println!("{RED}[{}] DEAD-LETTER: Failed to send request for empty cars for mission {} due to yard validation failure. Error: {:?}{RESET}", self.name, mission.id, e);
+                        let details = "Not enough empty cars available and request for replenishment failed.";
+                        self.report_mission_failure(&mission, details);
+                        return;
+                    }
                 }
-
-
-
-                self.report_mission_failure(&mission, details);
+                if !self.pending_missions.iter().any(|m| m.id == mission.id) {
+                    self.pending_missions.push(mission);
+                } else {
+                    println!("{RED}[{}]::Station {}: Mission {} is already in pending missions. Not adding duplicate entry.{RESET}", self.name, self.id, mission.id);
+                }
                 return;
             }
         }
@@ -920,27 +997,106 @@ impl StationState {
         }
 
         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
         //let strict_mode = true; // Default is strictly "Goldilocks" - we will only accept an engine that is a perfect match for the mission's needs. If we don't have the perfect engine, we ask for help instead of just taking the next best thing. If pending missions becomes backlogged, we can consider relaxing this to allow for "overqualified" engines to take on missions that are below their ideal capacity, but for now we want to focus on the Goldilocks strategy to really test the engine request and network collaboration features.
 
         // Now we can finally check the roundhouse for a suitable engine, using the total weight and distance to determine which engines are capable of fulfilling this mission.
-        let engine = match self.roundhouse.find_suitable_engine(true_total_weight as f64, max_hop_distance) { // We use the max_hop_distance for the engine check because that's the longest single stretch of track the engine's fuel needs to cover
-            Ok(engine) => engine,
-            Err(e) => {
-                println!("{RED}Roundhouse {} Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", self.id, mission.id, e);
+        // let engine = match self.roundhouse.find_suitable_engine(true_total_weight as f64, max_hop_distance) { // We use the max_hop_distance for the engine check because that's the longest single stretch of track the engine's fuel needs to cover
+        //     Ok(engine) => engine,
+        //     Err(e) => {
+        //         println!("{RED}Roundhouse {} Error: Failed to find suitable engine for Mission {}: {:?}.{RESET}", self.id, mission.id, e);
+                
+        //         let mission_id = mission.id;
+        //         let request_id = self.yard.generate_new_request_id(); // We can use the yard's ID generator to create unique request IDs for tracking engine requests across the network.
+                
+        //         // let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
+        //         // self.report_mission_failure(&mission, details);
+        //         self.pending_missions.push(mission);
+
+        //         self.initiate_engine_request(self.id, request_id, Some(mission_id), true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
+
+
+        //         return;
+        //     }
+        // };
+        
+        let engine: Engine;
+        match self.roundhouse.find_can_fulfill_request(0.0, true_total_weight, max_hop_distance) {
+            Some(engine_id) => {
+                // We have an engine that can fulfill the request, so we need to select it by its ID to actually take it out of the roundhouse and use it for this mission.
+                engine = self.roundhouse.select_engine_by_id(engine_id).unwrap(); // We can safely unwrap here because we just found this engine ID in the roundhouse, so we know it exists.
+            },
+            None => {
+                // Recoverable shortage: park the mission locally and start engine gossip.
+                // Do not emit a producer-visible mission failure for this branch.
+                println!("{RED}Roundhouse {}: No engines available that can fulfill the request for Mission {}.{RESET}", self.id, mission.id);
                 
                 let mission_id = mission.id;
                 let request_id = self.yard.generate_new_request_id(); // We can use the yard's ID generator to create unique request IDs for tracking engine requests across the network.
                 
+                
                 // let details = "No suitable engines available for the mission. This indicates that the roundhouse does not have any engines that are capable of handling the required total weight and distance for this mission. Please investigate the roundhouse inventory and ensure that sufficient engines are available and properly maintained for upcoming missions.";
                 // self.report_mission_failure(&mission, details);
-                self.pending_missions.push(mission);
+                println!("{YELLOW}[{}]::Station {}: Deferring Mission {} until a support engine arrives.\n                 Not reporting failure yet because mission remains pending locally.{RESET}", self.name, self.id, mission_id);
 
-                self.initiate_engine_request(self.id, request_id, Some(mission_id), true_total_weight as f64, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
+                if !self.pending_missions.iter().any(|m| m.id == mission_id) {
+                    self.pending_missions.push(mission);
+                } else {
+                    println!("{RED}[{}]::Station {}: Mission {} is already in pending missions. Not adding duplicate entry.{RESET}", self.name, self.id, mission_id);
+                }
 
+                self.initiate_engine_request(self.id, request_id, Some(mission_id), true_total_weight, max_hop_distance, 8); // We can set a TTL of 8 to allow the request to propagate through the network without risking infinite loops. This gives enough time for neighboring stations to check their roundhouses and respond if they have a suitable engine, while also ensuring that the request doesn't bounce around indefinitely if no suitable engines are available in the network.
 
                 return;
             }
         };
+
+        
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
         // If we made it this far, it means we have a suitable engine and enough empty cars, so now we can actually pull the cargo out of the warehouse and continue with the assembly process.
         let cargo: Vec<Cargo> = match self.warehouse.get_cargo_by_ids(&mission.cargo_ids) {
@@ -997,6 +1153,30 @@ pub fn retry_pending_missions(&mut self) {
 
 
     pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
+
+
+
+        if let Some(request_id) = train.request_id {
+
+            if !train.cars.is_empty() {
+                println!("{RED}Warning: Train {} arrived with cars attached during an emergency engine transfer. This should not happen, as SOS protocol dictates that all cargo must be removed before sending an SOS. The attached cars will be processed as part of the salvage operation, but this indicates a breach of protocol that should be investigated.{RESET}", train.id);
+                panic!("Protocol breach: SOS train arrived with cars attached. This should never happen and indicates a critical failure in the SOS procedure. Immediate investigation required.");
+            }
+            
+            println!(
+                "{GREEN}[{}] Emergency engine transfer Train {} arrived for request {}.{RESET}",
+                self.name, train.id, request_id
+            );
+
+            self.roundhouse.house(train.engine);
+
+            self.retry_pending_missions();
+            let _ = reply_to.send(Ok(()));
+            return;
+        }
+
+
+
         let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can terminate.
         train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey or for disassembly if this is the final destination.
         //println!("{:?}", train);
@@ -1236,12 +1416,24 @@ pub fn retry_pending_missions(&mut self) {
         }
     }
 
-    pub fn handle_engine_request(&mut self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
+    pub fn handle_engine_request(&mut self, requester_id: u32, forwarder_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: u32, mut max_hop_to_requester: f64, mut mission_max_hop: f64, mut ttl: u32, mut branch_notified: [u32; 64], mut notified_count: usize) {
         println!("{BOLD}{YELLOW}[{}]::Station {}: Received engine request {} for mission ID {:?} for an engine with minimum capacity {}kg, mission max hop {}km, and TTL {} from Station {}.{RESET}", self.name, self.id, request_id, mission_id, min_capacity, mission_max_hop, ttl, requester_id);
         // check the number of engines of ANY TYPE across the entire roundhouse. We cannot give away our last engine, so we need to make sure we have at least 2 engines before we can fulfill this request. If we have 2 or more engines, we can send one to the requester. If we only have 1 engine, we cannot fulfill the request without risking our own operations, so we will have to decline.
         // we will iterate across the hashmap of engine types and count the total number of engines available. If the total number is greater than 1, we can fulfill the request. If the total number is 1 or less, we cannot fulfill the request.
         
         ttl -= 1; // Decrement TTL at the start of the method to ensure that we account for the hop to this station, even if we end up not forwarding the request due to lack of engines or TTL expiration. This way, the TTL accurately reflects the number of hops the request has taken through the network, regardless of whether it gets forwarded or not.
+        match self.map.find_shortest_path(self.id, forwarder_id) {
+            Some((d, _r)) => {
+                if d > max_hop_to_requester {
+                    max_hop_to_requester = d
+                }
+            },
+            None => {
+                println!("{RED}Network Error: No track laid between {} and {}. Cannot process engine request.{RESET}", self.id, forwarder_id);
+                return;
+            }
+        };
+
 
         if self.seen_engine_request.contains(&request_id) {
             println!("{YELLOW}Already processed engine request {}. Ignoring to prevent loops.{RESET}", request_id);
@@ -1258,6 +1450,24 @@ pub fn retry_pending_missions(&mut self) {
                 return;
             }
         };
+
+
+
+
+
+
+
+        
+        // let mut request_max_hop = 0.0;
+        // for i in 0..route_to_requester.len() - 1 {
+        //     if let Some(dist) = self.map.get_distance(route_to_requester[i], route_to_requester[i+1]) {
+        //         if dist > request_max_hop {
+        //             request_max_hop = dist;
+        //         }
+        //     }
+        // }
+
+
         //let max_hop_to_requester = route_to_requester.windows(2).filter_map(|pair| self.map.get_distance(pair[0], pair[1])).fold(0./0., f64::max); // Calculate the max hop distance to the requester, which is needed to determine if we have a suitable engine that can make it there.
         for i in 0..route_to_requester.len() - 1 {
             if let Some(dist) = self.map.get_distance(route_to_requester[i], route_to_requester[i+1]) {
@@ -1267,9 +1477,50 @@ pub fn retry_pending_missions(&mut self) {
             }
         }
         
+
+
+
+
+
+
+
+
+        //Let's DRY up the following repetitions
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
         if total_engines_available > 1 {
-            match self.roundhouse.find_suitable_engine(min_capacity, mission_max_hop){
-                Ok(engine) => {
+
+
+            let engine: Engine;
+
+
+            match self.roundhouse.find_can_fulfill_request(max_hop_to_requester, min_capacity, mission_max_hop) {
+                Some(engine_id) => {
+                    // We have an engine that can fulfill the request, so we need to select it by its ID to actually take it out of the roundhouse and use it for this mission.
+                    engine = self.roundhouse.select_engine_by_id(engine_id).unwrap(); // We can safely unwrap here because we just found this engine ID in the roundhouse, so we know it exists.
                     println!("{GREEN}Roundhouse {}: Found suitable engine {} for requester {} for request {}. Dispatching...{RESET}", self.id, engine.id, requester_id, request_id);
                     // We can dispatch the engine to the requester using the network's routing logic, which will find the best path from this station to the requester and send the engine along that path. We can create a temporary Train with just the engine and no cars to represent this transfer.
                     let temp_train = Train {
@@ -1292,6 +1543,7 @@ pub fn retry_pending_missions(&mut self) {
                             request_id,
                             mission_id,
                             min_capacity,
+                            max_hop_to_requester,
                             mission_max_hop,
                             ttl,
                             branch_notified,
@@ -1304,8 +1556,8 @@ pub fn retry_pending_missions(&mut self) {
 
 
                 },
-                Err(e) => {
-                    println!("{RED}Roundhouse {} Error: Failed to find suitable engine for request from Station {}: {:?}.{RESET}", self.id, requester_id, e);
+                None => {
+                    println!("{RED}Roundhouse {} Error: Failed to find suitable engine for request from Station {}.{RESET}", self.id, requester_id);
                     if ttl > 0 {
                         //ttl -= 1; // Decrement TTL before forwarding
                         self.forward_engine_request(
@@ -1313,6 +1565,7 @@ pub fn retry_pending_missions(&mut self) {
                             request_id,
                             mission_id,
                             min_capacity,
+                            max_hop_to_requester,
                             mission_max_hop,
                             ttl,
                             branch_notified,
@@ -1336,6 +1589,7 @@ pub fn retry_pending_missions(&mut self) {
                     request_id,
                     mission_id,
                     min_capacity,
+                    max_hop_to_requester,
                     mission_max_hop,
                     ttl,
                     branch_notified,
@@ -1350,17 +1604,17 @@ pub fn retry_pending_missions(&mut self) {
     }
 
 
-    fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mission_max_hop: f64, ttl: u32) {
+    fn initiate_engine_request(&mut self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: u32, mission_max_hop: f64, ttl: u32) {
         // We initialize branch_notified with the ID of the requester to prevent the request from being forwarded back to the requester and creating loops right from the start. We also initialize notified_count to 1 since we have already "notified" the requester by receiving the request in the first place.
         println!("{YELLOW}Roundhouse {}: Initiating engine request for Station {} with request ID {} for mission ID {:?}.{RESET}", self.id, requester_id, request_id, mission_id);
         let branch_notified = [requester_id; 64]; // We can use this array to keep track of which stations have been or will be notified of this request. Before forwarding this request, the station will place its id, as well the target stations' ids, into the array to prevent those stations from forwarding the request back to this station and creating loops. We initialize it with the requester_id to prevent loops right from the start.
         let notified_count = 1; // We start with 1 because we have already "notified" the requester by receiving the request in the first place.
         
-        self.forward_engine_request(requester_id, request_id, mission_id, min_capacity, mission_max_hop, ttl, branch_notified, notified_count);
+        self.forward_engine_request(requester_id, request_id, mission_id, min_capacity, 0.0, mission_max_hop, ttl, branch_notified, notified_count);
     }
 
     // Copilot, let's make a helper method for forwarding engine_requests to neighbors. We'll need to do it for the origin of the request, and we will need it for multiple arms of handle_engine_request when we have to forward due to insufficient engines or when we have to fan out due to TTL. This method will take care of stamping the branch_notified array and forwarding the request to the appropriate neighbors based on the TTL and the number of valid candidates. As well as incrementing the notified_count and ensuring we don't forward to neighbors that have already been notified. You got it, Copilot!
-    fn forward_engine_request(&self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: f64, mission_max_hop: f64, ttl: u32, branch_notified: [u32; 64], notified_count: usize) {
+    fn forward_engine_request(&self, requester_id: u32, request_id: u32, mission_id: Option<u32>, min_capacity: u32, max_hop_to_requester: f64, mission_max_hop: f64, ttl: u32, branch_notified: [u32; 64], notified_count: usize) {
         use rand::seq::SliceRandom; // We can use this to randomly select neighbors to forward the request to if we have to fan out due to TTL and number of candidates.
         
 
@@ -1405,7 +1659,6 @@ pub fn retry_pending_missions(&mut self) {
         let base_ttl = ttl/ chosen_candidates.len() as u32; // First, we calculate the base TTL for each neighbor.
         let ttl_remainder = ttl % chosen_candidates.len() as u32; // We also calculate the remainder of the TTL division, which we will distribute to the first few neighbors of the shuffled valid candidates to simulate randomness in TTL assignment.
 
-
         for (i, &chosen_id) in chosen_candidates.iter().enumerate() {
             //First, everyone gets the same base TTL, and then we distribute the remainder TTL to the first few neighbors in the shuffled list to add some randomness to the TTL assignment.
             let assigned_ttl = if i < ttl_remainder as usize {
@@ -1418,9 +1671,11 @@ pub fn retry_pending_missions(&mut self) {
                 Some(neighbor) => {
                     match neighbor.send(StationCommand::EngineRequest { 
                         requester_id, 
+                        forwarder_id: self.id, // We need to include the ID of the station that is forwarding the request (which is this station) so that the next station can calculate the longest hop to the requester accurately.
                         request_id,
                         mission_id, // We also need to forward the mission_id in case we need to correlate this engine request with a specific mission at the requester station.
                         min_capacity,
+                        max_hop_to_requester, // We also need to forward the max_hop_to_requester that we calculated at this station.
                         mission_max_hop, 
                         ttl: assigned_ttl,
                         branch_notified: next_notified, // We forward the stamped branch_notified array to prevent loops.
@@ -1506,9 +1761,9 @@ pub fn retry_pending_missions(&mut self) {
         let (transit_tx, transit_rx) = mpsc::channel();
 
         thread::spawn(move || {
-            let time = train.dispatch(distance_to_next_stop).expect("Failed to dispatch");
-            println!("{BOLD}{YELLOW}[{}::Station {}: Train {} is en route on Mission {} to next stop [Station {}]. Estimated time: {:.2} seconds.{RESET}", station_name_clone, station_id_clone, train_id, train.mission_id.unwrap_or(0), next_stop, time);
-            thread::sleep(std::time::Duration::from_secs_f64(time)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
+            let time_to_travel = train.dispatch(distance_to_next_stop).expect("Failed to dispatch"); // This calculates the time to travel to the next station based on the distance and the engine's speed. 
+            println!("{BOLD}{YELLOW}[{}::Station {}: Train {} is en route on Mission {} to next stop [Station {}]. Estimated time: {:.2} seconds.{RESET}", station_name_clone, station_id_clone, train_id, train.mission_id.unwrap_or(0), next_stop, time_to_travel);
+            thread::sleep(std::time::Duration::from_secs_f64(time_to_travel)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
 
             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
             let tree_falls = rand::thread_rng().gen_bool(0.1);
@@ -1531,45 +1786,15 @@ pub fn retry_pending_missions(&mut self) {
                 }
 
 
-                // if let Some(mission_id) = train.mission_id {
-                //     if !train.cars.is_empty() {
-                //         println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for mission {}", train_id, mission_id);
-
-                //         station_tx_clone.send(StationCommand::HandleEmergencySOS {
-                //             mission_id,
-                //             destination: train.destination,
-                //             surviving_cars: train.cars,
-                //             report_to: train.report_to,
-                //         }).expect("SOS failed");
-                //     } else {
-                //         println!(
-                //             "{RED}🚨 DERAILMENT: Emergency engine transfer Train {} lost on request {}. No cargo to salvage.{RESET}",
-                //             train_id, train.request_id.unwrap_or(0)
-                //         );
-                //     }
-                // }
-
-
-                // if let Some(request_id) = train.request_id {
-                //     println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for engine request {}", train_id, request_id);
-                //     // We can also send an SOS for engine requests, but since there is no mission to report back to, we will just log the derailment and return the surviving cars to the yard without sending a MissionReport.
-                //     station_tx_clone.send(StationCommand::HandleEmergencySOS {
-                //         mission_id: 0, // We can use a mission_id of 0 or some other sentinel value to indicate that this SOS is not related to a specific mission, since engine requests don't have mission IDs. The handling logic can check for this and know that it doesn't need to send a MissionReport back to a mission reply channel.
-                //         destination: train.destination,
-                //         surviving_cars: train.cars, // The train dies, but the cars live!
-                //         report_to: None, // No mission report needed for engine request derailments since there is no mission to report back to.
-                //     }).expect("SOS failed");
-                // }
-
                 return; // Thread ends. Engine drops. The cars are now in limbo until the station processes the SOS and returns them to the yard or purgatory.
             } else {
-                println!("{GREEN}{BOLD}[{}] Train {} has successfully arrived at next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
+                println!("{CYAN}[{}] Train {} is crossing to next stop {}. Sending receive command...{RESET}", station_name_clone, train_id, next_stop);
                 next_stop_handle.send(StationCommand::ReceiveTrain { train, reply_to: transit_tx }).expect("Failed to forward train to next station");
             }
 
             match transit_rx.recv() {
                 Ok(_) => {
-                    println!("{BOLD}{CYAN}[{}]::Station {}: CHOO CHOO! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, station_id_clone, train_id, next_stop);
+                    println!("{BOLD}{GREEN}[{}]::Station {}: Transit! Train {} has been received at {}. Finalizing transit...{RESET}", station_name_clone, station_id_clone, train_id, next_stop);
                     // Here we would handle the result of the transit, such as sending a MissionReport back to the mission's reply channel based on success or failure at the next station.
                 },
                 Err(e) => {
