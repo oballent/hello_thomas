@@ -2,7 +2,7 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::models::{Producer, Cargo, Engine, EngineType, FreightOrder, Location, Mission, MissionReport, StationCommand, TrainCar};
+use crate::models::{Producer, Cargo, Engine, EngineType, FreightOrder, Location, Mission, MissionReport, StationCommand, TrainCar, now_unix_ms, STATION_HEARTBEAT_MS};
 use crate::facilities::Station;
 use crate::network::{RailwayNetwork, GlobalLedger};
 
@@ -23,6 +23,37 @@ const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
 use serde::Deserialize;
+use tracing::{info, debug, warn, error};
+use tracing_subscriber::{fmt, EnvFilter, prelude::*};
+use tracing_appender::rolling;
+
+use tracing_appender::non_blocking::WorkerGuard;
+
+fn init_tracing() -> WorkerGuard {
+    // Write detailed logs (debug, trace) to a rolling file in the target directory
+    let file_appender = rolling::daily("target", "hello_thomas.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    // Setup the subscriber:
+    // - File layer gets everything (debug/trace and up)
+    // - Terminal layer gets only info/warn/error for a clean console
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_writer(non_blocking)
+                .with_filter(EnvFilter::new("hello_thomas=trace")) // 👈 Changed to 'trace' to capture fine-grained lifecycle events!
+        )
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_filter(EnvFilter::new("hello_thomas=info"))
+        );
+
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("Failed to set global tracing subscriber");
+        
+    guard
+}
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -57,6 +88,8 @@ pub struct TrackConfig {
 // Ahem, let's get this show on the rails!
 
 fn main() {
+    let _log_guard = init_tracing();
+    info!("Starting the Sodor railway simulation...");
 
     // 1. Read the raw text from the file
     let file_content = std::fs::read_to_string("sodor.json").expect("Failed to read sodor.json");
@@ -64,7 +97,7 @@ fn main() {
     // 2. SERDE MAGIC: Convert the JSON text directly into our Rust Structs!
     let config: Config = serde_json::from_str(&file_content).expect("Failed to parse JSON");
 
-    println!("{GREEN}Loaded {} stations and {} tracks from config.{RESET}", config.stations.len(), config.tracks.len());
+    info!("Loaded {} stations and {} tracks from config.", config.stations.len(), config.tracks.len());
 
     let mut network = RailwayNetwork::new();
     let mut temporary_switchboard: HashMap<u32, Sender<StationCommand>> = HashMap::new();
@@ -146,7 +179,7 @@ fn main() {
 
     for station in &config.stations {
         let neighbors = build_neighbors(station.id, &shared_network, &temporary_switchboard);
-        println!("Station {} has neighbors: {:?}", station.name, neighbors.keys().collect::<Vec<&u32>>());
+        info!("Station {} has neighbors: {:?}", station.name, neighbors.keys().collect::<Vec<&u32>>());
 
         let tx = temporary_switchboard.get(&station.id).expect("Missing tx!").clone();
         let rx = temporary_receivers.remove(&station.id).expect("Missing rx!");
@@ -163,229 +196,370 @@ fn main() {
         )
     }
 
-    let cargo1 = Cargo { id:0, item: String::from("bananas"), actual_weight: 1000, contraband: None };
-    let cargo2 = Cargo { id:1, item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
-    let cargo3 = Cargo { id:2, item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
-    let cargo4 = Cargo { id:3, item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
-    let cargo5 = Cargo { id:4, item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
-    let cargo6 = Cargo { id:5, item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
-    let cargo7 = Cargo { id:6, item: String::from("Declassified Documents"), actual_weight: 11001, contraband: Some(String::from("The Truth")) };
+    // let cargo1 = Cargo { id:0, item: String::from("bananas"), actual_weight: 1000, contraband: None };
+    // let cargo2 = Cargo { id:1, item: String::from("crates of oranges"), actual_weight: 1005, contraband: Some(String::from("Stylish TUMI Briefcase")) };
+    // let cargo3 = Cargo { id:2, item: String::from("Redacted Documents"), actual_weight: 11001, contraband: Some(String::from("The Service Weapon")) };
+    // let cargo4 = Cargo { id:3, item: String::from("Various Crafting Ingredients"), actual_weight: 1500, contraband: None };
+    // let cargo5 = Cargo { id:4, item: String::from("Scrap Metal"), actual_weight: 10075, contraband: Some(String::from("Excessively Heavy Fire Extinguisher")) };
+    // let cargo6 = Cargo { id:5, item: String::from("pallets of electronics"), actual_weight: 3000, contraband: None };
+    // let cargo7 = Cargo { id:6, item: String::from("Declassified Documents"), actual_weight: 11001, contraband: Some(String::from("The Truth")) };
 
-    let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
-    let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
-    let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
-    let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
-    let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),}; 
-    let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Mathison")),};
-    let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
+    // let carriage = TrainCar { id:1, cargo: Some(cargo2), passenger: Some(String::from("Lemon:"))};
+    // let dining_car = TrainCar { id:2, cargo: Some(cargo1), passenger: Some(String::from("Ladybug"))};
+    // let boxcar1 = TrainCar { id:3, cargo: Some(cargo5), passenger: Some(String::from("Blazkowicz")),};
+    // let boxcar2 = TrainCar { id:4, cargo: Some(cargo6), passenger: Some(String::from("Tangerine")),};
+    // let boxcar3 = TrainCar { id:5, cargo: Some(cargo3), passenger: Some(String::from("Faden")),}; 
+    // let boxcar4 = TrainCar { id:5, cargo: Some(cargo7), passenger: Some(String::from("Mathison")),};
+    // let caboose = TrainCar { id:6, cargo: Some(cargo4), passenger: Some(String::from("Artyom"))};
 
-    let tidmouth_incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
-
-
-    let engine1 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
-    let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 3000.0 };
-    let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 1000.0 };
-    let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 750.0 };
-    let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-
-    let emergency_gordon_1 = Engine { id: 6, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_2 = Engine { id: 7, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_3 = Engine { id: 8, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_4 = Engine { id: 9, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_5 = Engine { id: 10, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_6 = Engine { id: 11, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
-    let emergency_gordon_7 = Engine { id: 12, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let tidmouth_incoming_cars = vec![carriage, dining_car, boxcar1, boxcar2, boxcar3, boxcar4, caboose];
 
 
+    // let engine1 = Engine { id: 1, engine_type: EngineType::Thomas, current_fuel: 1000.0 };
+    // let engine2 = Engine { id: 2, engine_type: EngineType::Thomas, current_fuel: 3000.0 };
+    // let engine3 = Engine { id: 3, engine_type: EngineType::Percy, current_fuel: 1000.0 };
+    // let engine4 = Engine { id: 4, engine_type: EngineType::Diesel, current_fuel: 750.0 };
+    // let engine5 = Engine { id: 5, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
 
-    let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5, emergency_gordon_7];
-    // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
-    let (tx_reply, rx_reply) = mpsc::channel();
-    // TESTING: We can send commands to the station before it's fully integrated into the network, as long as we have its channel set up. This allows us to simulate the process of the station receiving resources and preparing for operations even before it starts handling missions from the network. It's a bit like stocking the station with supplies and engines before it starts running trains, which is a realistic part of how a station would operate in the real world.
-    // match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+    // let emergency_gordon_1 = Engine { id: 6, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_2 = Engine { id: 7, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_3 = Engine { id: 8, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_4 = Engine { id: 9, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_5 = Engine { id: 10, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_6 = Engine { id: 11, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+    // let emergency_gordon_7 = Engine { id: 12, engine_type: EngineType::Gordon, current_fuel: 5000.0 };
+
+
+
+    // let tidmouth_incoming_engines = vec![engine1, engine2, engine3, engine4, engine5, emergency_gordon_7];
+    // // We're going to add engines and cars to the station before we add the station to the network. This is a bit like setting up the station's inventory and resources before it starts receiving missions and dispatching trains. Since we're still in the main thread and haven't moved the station into the network yet, we can freely mutate it without worrying about ownership conflicts with the network. Once we add the station to the network, it will be owned by the network and we won't be able to directly access it from the main thread anymore, but that's okay because the station will be able to receive commands and send updates through its own channels.
+    // let (tx_reply, rx_reply) = mpsc::channel();
+    // // TESTING: We can send commands to the station before it's fully integrated into the network, as long as we have its channel set up. This allows us to simulate the process of the station receiving resources and preparing for operations even before it starts handling missions from the network. It's a bit like stocking the station with supplies and engines before it starts running trains, which is a realistic part of how a station would operate in the real world.
+    // // match tidmouth_tx.clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
     
-    let brendam_docks_incoming_engines = vec![emergency_gordon_1];
+    // let brendam_docks_incoming_engines = vec![emergency_gordon_1];
 
-    let knapford_incoming_engines = vec![emergency_gordon_2];
+    // let knapford_incoming_engines = vec![emergency_gordon_2];
 
-    let welsworth_incoming_engines = vec![emergency_gordon_3];
+    // let welsworth_incoming_engines = vec![emergency_gordon_3];
 
-    let peel_godred_incoming_engines = vec![emergency_gordon_4];
+    // let peel_godred_incoming_engines = vec![emergency_gordon_4];
     
-    let vicarstown_incoming_engines = vec![emergency_gordon_5];
+    // let vicarstown_incoming_engines = vec![emergency_gordon_5];
 
-    let maron_incoming_engines = vec![emergency_gordon_6];
-    
-    
+    // let maron_incoming_engines = vec![emergency_gordon_6];
     
     
-    //WE ARE GOING TO COMMENT OUT OUR TRAINCAR INITIALIZATION, in order to test the functionality of request_empty_cars and the station's ability to respond to that command by creating empty cars on demand. This will allow us to verify that the station can handle requests for resources and manage its inventory of train cars correctly, which is an important part of its functionality in fulfilling missions and dispatching trains across the network. By testing this command, we can ensure that the station is properly integrated with the network and can respond to commands from producers in a dynamic and flexible way. Nice, Copilot! Let's see how the station handles the request for empty cars and make sure it can create them on demand when needed! Choo choo!
     
-    match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
-        Ok(_) => println!("Car successfully intaken by Tidmouth!"),
-        Err(e) => println!("Failed to intake car: {:?}", e),
-    }
-    //We will block and wait for Tidmouth to confirm that it has received the car before we send the next one. This simulates a more realistic process where the station needs to acknowledge receipt of each car before accepting the next one, and it also allows us to see the flow of messages between the main thread and the station more clearly in the console output.
-    match rx_reply.recv() {
-        Ok(result) => match result {
-            Ok(_) => println!("Tidmouth confirmed receipt of the car."),
-            Err(e) => println!("Tidmouth reported an error while intaking the car: {:?}", e),
-        },
-        Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
-    };
-
-
-
-
-
-
-
-
-
-    // TESTING. We can do the same thing with engines, sending them one at a time and waiting for confirmation from Tidmouth before sending the next one. This allows us to simulate the process of the station receiving and processing each engine individually, which is more realistic and also helps us see the message flow more clearly in the console output. It's a bit like how a station would need to inspect and prepare each engine before it can be added to the roundhouse and used for operations.
-    tidmouth_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Tidmouth!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Tidmouth confirmed receipt of the engine."),
-                Err(e) => println!("Tidmouth reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
-        }
-    });
-
-    brendam_docks_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&1).expect("Brendam Docks channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Brendam Docks!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Brendam Docks confirmed receipt of the engine."),
-                Err(e) => println!("Brendam Docks reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Brendam Docks: {:?}", e),
-        }
-    });
-
-    vicarstown_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&4).expect("Vicarstown channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Vicarstown!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Vicarstown confirmed receipt of the engine."),
-                Err(e) => println!("Vicarstown reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Vicarstown: {:?}", e),
-        }
-    });
-
-    maron_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&5).expect("Maron channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Maron!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Maron confirmed receipt of the engine."),
-                Err(e) => println!("Maron reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Maron: {:?}", e),
-        }
-    });
     
-    welsworth_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&3).expect("Welsworth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Welsworth!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Welsworth confirmed receipt of the engine."),
-                Err(e) => println!("Welsworth reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Welsworth: {:?}", e),
-        }
-    });
-
-    peel_godred_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&2).expect("Peel Godred channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Peel Godred!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Peel Godred confirmed receipt of the engine."),
-                Err(e) => println!("Peel Godred reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Peel Godred: {:?}", e),
-        }
-    });
-
-    knapford_incoming_engines.into_iter().for_each(|engine| {
-        match temporary_switchboard.get(&6).expect("Knapford channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
-            Ok(_) => println!("Engine successfully intaken by Knapford!"),
-            Err(e) => println!("Failed to intake engine: {:?}", e),
-        }
-        match rx_reply.recv() {
-            Ok(result) => match result {
-                Ok(_) => println!("Knapford confirmed receipt of the engine."),
-                Err(e) => println!("Knapford reported an error while intaking the engine: {:?}", e),
-            },
-            Err(e) => println!("Failed to receive reply from Knapford: {:?}", e),
-        }
-    });
-
-
+    // //WE ARE GOING TO COMMENT OUT OUR TRAINCAR INITIALIZATION, in order to test the functionality of request_empty_cars and the station's ability to respond to that command by creating empty cars on demand. This will allow us to verify that the station can handle requests for resources and manage its inventory of train cars correctly, which is an important part of its functionality in fulfilling missions and dispatching trains across the network. By testing this command, we can ensure that the station is properly integrated with the network and can respond to commands from producers in a dynamic and flexible way. Nice, Copilot! Let's see how the station handles the request for empty cars and make sure it can create them on demand when needed! Choo choo!
     
-    // 2. Build the tracks using immutable references to the local variables!
-    // network gets mutated, but tidmouth and brendam_docks are merely read. No conflict.
-
-
-
-    //Before creating freight orders, we make cargo
-    let foam1 = Cargo { id: 7, item: "foam".to_string(), actual_weight: 1, contraband: None};
-    let foam2 = Cargo { id: 8, item: "foam".to_string(), actual_weight: 1, contraband: None};
-    let foam3 = Cargo { id: 9, item: "foam".to_string(), actual_weight: 1, contraband: None};
-
-    let tidmouth_incoming_cargo = vec![foam1, foam2, foam3];
-
-    match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCargo {
-        cargo: tidmouth_incoming_cargo, 
-        reply_to: tx_reply.clone() 
-    }) {
-        Ok(_) => println!("Cargo successfully intaken by Tidmouth!"),
-        Err(e) => println!("Failed to intake cargo: {:?}", e),
-    }
+    // match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCar { cars: tidmouth_incoming_cars, reply_to: tx_reply.clone() }) {
+    //     Ok(_) => println!("Car successfully intaken by Tidmouth!"),
+    //     Err(e) => println!("Failed to intake car: {:?}", e),
+    // }
+    // //We will block and wait for Tidmouth to confirm that it has received the car before we send the next one. This simulates a more realistic process where the station needs to acknowledge receipt of each car before accepting the next one, and it also allows us to see the flow of messages between the main thread and the station more clearly in the console output.
+    // match rx_reply.recv() {
+    //     Ok(result) => match result {
+    //         Ok(_) => println!("Tidmouth confirmed receipt of the car."),
+    //         Err(e) => println!("Tidmouth reported an error while intaking the car: {:?}", e),
+    //     },
+    //     Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
+    // };
 
 
 
 
 
 
-    //commenting out just to see if intake car pushes to global ledger correctly without us having to wait for the station to confirm receipt of the car. This will allow us to verify that the station is properly updating the global ledger with new cargo as it intakes it, which is an important part of how the station manages its inventory and fulfills missions. By testing this functionality, we can ensure that the station is correctly integrated with the global ledger and can keep track of the cargo it has on hand, which will be crucial for fulfilling freight orders and dispatching trains across the network. Let's see if the cargo IDs show up in the global ledger after we send the IntakeCargo command! Choo choo!
-    // //now to use the foam to create some freight orders
-    // let freight_order1 = FreightOrder { id: 1, cargo_ids: vec![7], origin: 0, destination: 1 , ttl: 5};
-    // let freight_order2 = FreightOrder { id: 2, cargo_ids: vec![8], origin: 0, destination: 1 , ttl: 5};
-    // let freight_order3 = FreightOrder { id: 3, cargo_ids: vec![9], origin: 0, destination: 1 , ttl: 5};
-    // //Testing that this whole .lock() thing really works! Choo!
-    // {
-    //     let mut ledger_access = shared_ledger.lock().unwrap();
-    //     ledger_access.pending_cargo.push(freight_order1);
-    //     ledger_access.pending_cargo.push(freight_order2);
-    //     ledger_access.pending_cargo.push(freight_order3);
+
+
+
+    // // TESTING. We can do the same thing with engines, sending them one at a time and waiting for confirmation from Tidmouth before sending the next one. This allows us to simulate the process of the station receiving and processing each engine individually, which is more realistic and also helps us see the message flow more clearly in the console output. It's a bit like how a station would need to inspect and prepare each engine before it can be added to the roundhouse and used for operations.
+    // tidmouth_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Tidmouth!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Tidmouth confirmed receipt of the engine."),
+    //             Err(e) => println!("Tidmouth reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Tidmouth: {:?}", e),
+    //     }
+    // });
+
+    // brendam_docks_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&1).expect("Brendam Docks channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Brendam Docks!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Brendam Docks confirmed receipt of the engine."),
+    //             Err(e) => println!("Brendam Docks reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Brendam Docks: {:?}", e),
+    //     }
+    // });
+
+    // vicarstown_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&4).expect("Vicarstown channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Vicarstown!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Vicarstown confirmed receipt of the engine."),
+    //             Err(e) => println!("Vicarstown reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Vicarstown: {:?}", e),
+    //     }
+    // });
+
+    // maron_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&5).expect("Maron channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Maron!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Maron confirmed receipt of the engine."),
+    //             Err(e) => println!("Maron reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Maron: {:?}", e),
+    //     }
+    // });
+    
+    // welsworth_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&3).expect("Welsworth channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Welsworth!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Welsworth confirmed receipt of the engine."),
+    //             Err(e) => println!("Welsworth reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Welsworth: {:?}", e),
+    //     }
+    // });
+
+    // peel_godred_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&2).expect("Peel Godred channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Peel Godred!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Peel Godred confirmed receipt of the engine."),
+    //             Err(e) => println!("Peel Godred reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Peel Godred: {:?}", e),
+    //     }
+    // });
+
+    // knapford_incoming_engines.into_iter().for_each(|engine| {
+    //     match temporary_switchboard.get(&6).expect("Knapford channel must exist").clone().send(StationCommand::IntakeEngine { engine, reply_to: tx_reply.clone() }) {
+    //         Ok(_) => println!("Engine successfully intaken by Knapford!"),
+    //         Err(e) => println!("Failed to intake engine: {:?}", e),
+    //     }
+    //     match rx_reply.recv() {
+    //         Ok(result) => match result {
+    //             Ok(_) => println!("Knapford confirmed receipt of the engine."),
+    //             Err(e) => println!("Knapford reported an error while intaking the engine: {:?}", e),
+    //         },
+    //         Err(e) => println!("Failed to receive reply from Knapford: {:?}", e),
+    //     }
+    // });
+
+
+
+
+    // //Before creating freight orders, we make cargo
+    // let foam1 = Cargo { id: 7, item: "foam".to_string(), actual_weight: 1, contraband: None};
+    // let foam2 = Cargo { id: 8, item: "foam".to_string(), actual_weight: 1, contraband: None};
+    // let foam3 = Cargo { id: 9, item: "foam".to_string(), actual_weight: 1, contraband: None};
+
+    // let tidmouth_incoming_cargo = vec![foam1, foam2, foam3];
+
+    // match temporary_switchboard.get(&0).expect("Tidmouth channel must exist").clone().send(StationCommand::IntakeCargo {
+    //     cargo: tidmouth_incoming_cargo, 
+    //     reply_to: tx_reply.clone() 
+    // }) {
+    //     Ok(_) => println!("Cargo successfully intaken by Tidmouth!"),
+    //     Err(e) => println!("Failed to intake cargo: {:?}", e),
     // }
 
 
 
 
 
-    println!("{YELLOW}System Online. Spawning independent customer threads...{RESET}");
+
+
+    // println!("{YELLOW}System Online. Spawning independent customer threads...{RESET}");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+use rand::Rng; // Add this to the top of main.rs!
+
+    //println!("{YELLOW}Spawning dynamic world state...{RESET}");
+    info!("Spawning dynamic world state...");
+
+    let mut rng = rand::thread_rng();
+    let mut global_engine_id = 1;
+    let mut global_cargo_id = 1;
+
+    // A fun list of Sodor-appropriate cargo to randomly select from
+    let item_types = [
+        "Foam", "Bananas", "Steel Girders", "Welsh Coal", 
+        "Mail Bags", "Passengers", "Livestock", "Scrap Metal", "Electronics"
+    ];
+
+    // Iterate through every station we just built to stock them up!
+    for station in &config.stations {
+        let origin_id = station.id;
+        let tx = temporary_switchboard.get(&origin_id).expect("Channel missing!").clone();
+
+        info!("Stocking Station {}...", station.name);
+
+        // ==========================================
+        // 1. DETERMINISTIC ENGINE SPAWNING (8 per station)
+        // ==========================================
+        let engine_loadout = vec![
+            (EngineType::Thomas, EngineType::Thomas.max_fuel_capacity()), (EngineType::Thomas, EngineType::Thomas.max_fuel_capacity()),
+            (EngineType::Percy, EngineType::Percy.max_fuel_capacity()),  (EngineType::Percy, EngineType::Percy.max_fuel_capacity()),
+            (EngineType::Diesel, EngineType::Diesel.max_fuel_capacity()), (EngineType::Diesel, EngineType::Diesel.max_fuel_capacity()),
+            (EngineType::Gordon, EngineType::Gordon.max_fuel_capacity()), (EngineType::Gordon, EngineType::Gordon.max_fuel_capacity()),
+        ];
+
+        for (e_type, fuel) in engine_loadout {
+            let new_engine = Engine {
+                id: global_engine_id,
+                engine_type: e_type,
+                current_fuel: fuel,
+            };
+            global_engine_id += 1;
+
+            let (tx_reply, rx_reply) = mpsc::channel();
+            // Send to station and wait for confirmation
+            tx.send(StationCommand::IntakeEngine { engine: new_engine, reply_to: tx_reply }).unwrap();
+            let _ = rx_reply.recv().unwrap(); 
+        }
+
+        // ==========================================
+        // 2. CHAOTIC CARGO & FREIGHT ORDER SPAWNING (70 per station)
+        // ==========================================
+        let mut incoming_cargo = Vec::new();
+        let mut incoming_orders = Vec::new();
+
+        for _ in 0..10 {
+            // Pick a random destination that IS NOT the current station
+            let mut dest_id = rng.gen_range(0..config.stations.len() as u32);
+            while dest_id == origin_id {
+                dest_id = rng.gen_range(0..config.stations.len() as u32);
+            }
+
+            // Generate random weight between 100kg and 4000kg
+            let random_weight = rng.gen_range(100..=4000);
+            let random_item = item_types[rng.gen_range(0..item_types.len())].to_string();
+            let random_ttl = rng.gen_range(8..=20);
+            let created_time_ms = now_unix_ms();
+            let expiry_time_ms = created_time_ms.saturating_add((random_ttl as u64).saturating_mul(STATION_HEARTBEAT_MS));
+
+            // 5% chance of contraband for extra spice
+            let contraband = if rng.gen_ratio(1, 20) {
+                Some("Mystery Box".to_string())
+            } else {
+                None
+            };
+
+            // Build the Physical Cargo
+            incoming_cargo.push(Cargo {
+                id: global_cargo_id,
+                item: random_item,
+                actual_weight: random_weight,
+                contraband,
+                created_time_ms,
+                expiry_time_ms,
+                in_transit_since_ms: None,
+            });
+
+            // Build the Digital Manifest (The Single Source of Truth!)
+            incoming_orders.push(FreightOrder::new(
+                global_cargo_id,
+                vec![global_cargo_id],
+                origin_id,
+                dest_id,
+                created_time_ms,
+                expiry_time_ms,
+            ));
+
+            global_cargo_id += 1;
+        }
+
+
+        let (tx_reply, rx_reply) = mpsc::channel();
+        // Bulk-send the physical cargo to the Station's Warehouse
+        tx.send(StationCommand::IntakeCargo { cargo: incoming_cargo, reply_to: tx_reply.clone() }).unwrap();
+        // We can optionally wait for the station to confirm intake here if your intake logic sends a reply!
+        let _ = rx_reply.recv().unwrap();
+
+
+
+
+
+
+
+
+        // We don't need the following because Station's handle_intake_cargo already pushes the cargo to the Global Ledger when it receives the StationCommand::IntakeCargo command. The station is responsible for updating the global ledger with the new cargo information as part of its processing of the intake command, so we don't need to do it separately here in the main thread. 
+        // Bulk-push the digital manifests to the Global Ledger
+        // {
+        //     let mut ledger_access = shared_ledger.lock().unwrap();
+        //     ledger_access.pending_cargo.extend(incoming_orders);
+        // }
+
+
+
+
+
+
+
+
+
+
+    }
+
+    info!("World Generation Complete! Spawned {} Engines and {} Cargo items.", global_engine_id - 1, global_cargo_id - 1);
+    info!("System Online. Spawning independent customer threads...");
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -408,10 +582,12 @@ fn main() {
     
     // 5. The "smart wait" for the producers to finish. We don't want to just sleep the main thread for an arbitrary amount of time; we want to actually wait for the producer threads to complete their work before we proceed with printing the final station status and shortest route. By calling join() on each producer thread handle, we ensure that the main thread will block until each producer thread has finished executing, which means we'll have received all the mission reports and printed them out before we move on to the next steps in the main thread.
     //thread::sleep(std::time::Duration::from_secs(6)); // This is just to ensure that the producers have time to send their missions and receive their reports before we print the final status. In a more complex simulation, we would want to implement a more robust synchronization mechanism to ensure that all threads have completed their work before we proceed, but for this simple example, a short sleep is sufficient to allow the message passing to complete before we print the final results.
-    println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
+    info!("Waiting for producer threads to complete...");
+    //println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
         producer_1_handle.join().unwrap();//this is like a gate that ensures the main thread waits for producer 1
         producer_2_handle.join().unwrap();//this as well, but for gate 2 and producer 2.
-    println!("{BOLD}{GREEN}Simulation Complete.{RESET}");
+        info!("GlobalLedger Status: {:#?}", shared_ledger.lock().unwrap());
+    info!("Simulation Complete.");
 
 
 

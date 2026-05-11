@@ -6,7 +6,7 @@
     { "id": 3, "name": "Welsworth", "x": 200.0, "y": 300.0 },
     { "id": 4, "name": "Maron", "x": 400.0, "y": -50.0 },
     { "id": 5, "name": "Vicarstown", "x": 450.0, "y": 200.0 },
-    { "id": 6, "name": "Peel Godred", "x": 600.0, "y": -150.0 }
+    { "id": 6, "name": "Peel Godred", "x": 400.0, "y": -250.0 }
   ],
   "tracks": [
     { "origin": 0, "destination": 2 },

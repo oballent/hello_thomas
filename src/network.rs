@@ -1,5 +1,6 @@
 use std::collections::{HashMap, BinaryHeap};
 use std::cmp::Ordering;
+use tracing::{info, debug, warn, error};
 
 // 1. The wrapper to hold a station and its cumulative distance in the queue
 #[derive(Clone, PartialEq)]
@@ -42,20 +43,33 @@ const BOLD: &str = "\x1b[1m";
 
 
 
+#[derive(Debug)]
 pub struct GlobalLedger {
-    pub pending_cargo: Vec<FreightOrder>,
+    pub pending_cargo: BinaryHeap<FreightOrder>,
     //pub active_missions: Vec<Mission>,
     //pub next_mission_id: u32,
+    pub missions_completed: u32,
+    pub missions_failed: u32,
+    pub cargo_expired_in_warehouse: u32,
+    pub cargo_expired_in_purgatory: u32,
+    pub trains_derailed: u32,
 }
 
 impl GlobalLedger {
     pub fn new() -> Self {
         GlobalLedger {
-            pending_cargo: Vec::new(),
+            pending_cargo: BinaryHeap::new(),
             //active_missions: Vec::new(),
             //next_mission_id: 1,
+            missions_completed: 0,
+            missions_failed: 0,
+            cargo_expired_in_warehouse: 0,
+            cargo_expired_in_purgatory: 0,
+            trains_derailed: 0,
         }
     }
+
+    
 }
 
 
@@ -109,22 +123,18 @@ impl RailwayNetwork {
         
         if let Some(neighbors) = self.tracks.get(&a) {
             if neighbors.iter().any(|(dest, _)| *dest == b) {
-                println!("{YELLOW}Network: Track already exists between {} and {}. Skipping.{RESET}", a, b);
+                //println!("{YELLOW}Network: Track already exists between {} and {}. Skipping.{RESET}", a, b);
+                warn!("Network: Track already exists between {} and {}. Skipping.", a, b);
                 return;
             }
         }
         
-        println!("{CYAN}Network: Laying track between {} and {} ({:.2}km){RESET}", a, b, distance);
+        //info!("Network: Laying track between {} and {} ({:.2}km)", a, b, distance);
         self.tracks.entry(a).or_insert_with(Vec::new).push((b, distance));
         self.tracks.entry(b).or_insert_with(Vec::new).push((a, distance));
-        println!("{CYAN}Network: Track laid between {} and {} ({:.2}km){RESET}", a, b, distance);
+        //info!("Network: Track laid between {} and {} ({:.2}km)", a, b, distance);
         
     }
-
-    // pub fn add_mission(&mut self, mission: Mission) {
-    //     println!("{YELLOW}Network Ledger: Registering Mission {}.{RESET}", mission.id);
-    //     self.missions.insert(mission.id, mission);
-    // }
 
     pub fn get_distance(&self, origin: StationId, destination: StationId) -> Option<Distance> {
         // We create a temporary tuple of StationId objects to match the HashMap key signature.

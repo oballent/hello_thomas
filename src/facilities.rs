@@ -1,9 +1,10 @@
-use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, FreightOrder ,Location, MissionReport};
+use crate::models::{Train, TrainCar, Engine, Mission, TrainError, RejectedAsset, EngineType, Cargo, FreightOrder ,Location, MissionReport, now_unix_ms};
 use crate::network::{GlobalLedger, RailwayNetwork};
 use core::error;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::f32::MAX_10_EXP;
 use rand::Rng;
+use tracing_subscriber::field::debug;
 
 //use tokio::sync::mpsc::{self, Sender, Receiver};
 //use tokio::time::{interval, Duration, Instant};
@@ -17,7 +18,15 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use std::time::{Duration, Instant};
 
-// (Don't forget to paste your color constants here too, or put them in a shared module later)
+
+// Copilot, can you import the tracing macros so I can add some logging to the code?
+use tracing::{info, debug, warn, error, trace}; // These are the macros we'll use to log messages at different levels of severity.
+
+
+
+
+
+
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
@@ -27,16 +36,15 @@ const BOLD: &str = "\x1b[1m";
 
 const EMPTY_CAR_WEIGHT: u32 = 2000; // Let's say every empty car weighs 2000kg. This is important for fuel calculations, because the engine has to pull not just the cargo, but also the weight of the cars themselves.
 
-// We start at 100 so it doesn't collide with the hardcoded cars (1-6) you made in main!
-static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(1000);
+static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(0);
 
-static GLOBAL_ORDER_ID: AtomicU32 = AtomicU32::new(1000);
+static GLOBAL_ORDER_ID: AtomicU32 = AtomicU32::new(0);
 
-static GLOBAL_REQUEST_ID: AtomicU32 = AtomicU32::new(0000);
+static GLOBAL_REQUEST_ID: AtomicU32 = AtomicU32::new(0);
 
 //static GLOBAL_MISSION_ID: AtomicU32 = AtomicU32::new(0000);
 
-static GLOBAL_TRAIN_ID: AtomicU32 = AtomicU32::new(0000);
+static GLOBAL_TRAIN_ID: AtomicU32 = AtomicU32::new(0);
 
 
 pub enum GossipStrategy {
@@ -56,7 +64,7 @@ pub trait CanReport {
         if let Some(chan) = channel {
             let _ = chan.send(MissionReport::Failure(message));
         } else {
-            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report failure for mission {}. Reason: {}{RESET}", name, mission_id, reason);
+            warn!("[{}] DEAD-LETTER: No reply channel available to report failure for mission {}. Reason: {}", name, mission_id, reason);
         }
     }
 
@@ -66,7 +74,7 @@ pub trait CanReport {
         if let Some(chan) = channel {
             let _ = chan.send(MissionReport::PartialFailure(message));
         } else {
-            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report partial failure for mission {}. Reason: {}. Lost car IDs: {:?}{RESET}", name, mission_id, reason, lost_cargo_ids);
+            warn!("[{}] DEAD-LETTER: No reply channel available to report partial failure for mission {}. Reason: {}. Lost car IDs: {:?}", name, mission_id, reason, lost_cargo_ids);
         }
     }
 
@@ -78,7 +86,7 @@ pub trait CanReport {
         if let Some(chan) = channel {
             let _ = chan.send(MissionReport::Success(message));
         } else {
-            println!("{RED}[{}] DEAD-LETTER: No reply channel available to report success for mission {}. Details: {}{RESET}", name, mission_id, details);
+            warn!("[{}] DEAD-LETTER: No reply channel available to report success for mission {}. Details: {}", name, mission_id, details);
         }
 
     }
@@ -310,8 +318,7 @@ impl Railyard {
     /// Move a car identified by its `car_id` from the yard into a train.
     ///
     /// Takes ownership of the car by removing it from `self.cars` and pushing it
-    /// into `train.cars`.  This avoids double-moving the same `TrainCar` value
-    /// (which is what caused the compiler errors you saw earlier).
+    /// into `train.cars`.  This avoids double-moving the same `TrainCar` value and ensures that the yard's inventory remains accurate.
     
     pub fn couple_by_id(&mut self, train: &mut Train, id: u32) {
         // 1. Look into the 'Locker Room' (HashMap) and try to remove the car
@@ -347,6 +354,7 @@ impl Railyard {
         // We've already validated that we have enough empty cars for this mission before we even started assembling, so we can be confident that this won't fail due to lack of cars. If it does fail, it's an unexpected error that we should know about immediately, which is why we use the `?` operator to propagate any errors up to the caller without having to write explicit error handling logic here.
         let mut cars = Vec::<TrainCar>::new();
         for cargo_item in cargo {
+            
             let car = self.load_cargo_into_empty_car(cargo_item)?;
             cars.push(car);
         }
@@ -354,6 +362,26 @@ impl Railyard {
         
     }
 
+    // Copilot was here! Sometimes you just need a functional buddy to help you think through the logic. Thanks, friend!
+    pub fn purge_expired_cargo_from_purgatory(&mut self) -> Vec<Cargo> {
+        let now_ms = now_unix_ms();
+        let mut expired_cargo = Vec::new();
+        let mut remaining_assets = Vec::new();
+
+        for mut asset in self.purgatory.drain(..) {
+            if let Some(cargo) = asset.car.cargo.take() {
+                if cargo.expiry_time_ms <= now_ms {
+                    println!("{RED}Purgatory Update: Cargo {} in Car {} has expired and is being removed from the system.{RESET}", cargo.item, asset.car.id);
+                    expired_cargo.push(cargo);
+                } else {
+                    // If the cargo hasn't expired yet, we can choose to either keep it in purgatory or move it back to the yard for potential reprocessing. For now, let's just keep it in purgatory until it either expires or we decide on a different handling strategy.
+                    remaining_assets.push(asset);
+                }
+            }
+        }
+        self.purgatory = remaining_assets;
+        expired_cargo
+    }
 
 }
 
@@ -525,7 +553,7 @@ impl Roundhouse {
     //                     engine.can_complete_mission(total_weight, distance_km)
     //                 });
 
-    //                 // 2. Chain it using the `.and_then()` you love!
+    //                 // 2. Chain it using the `.and_then()` we love!
     //                 // If position returned Some(index), and_then passes that index into queue.remove()
     //                 if let Some(engine) = winner_index.and_then(|index| queue.remove(index)) {
     //                     println!("{GREEN}Roundhouse {}: Dispatching Engine {} of type {:?} for mission ({}kg over {}km).{RESET}", self.id, engine.id, engine.engine_type, total_weight, distance_km);
@@ -556,9 +584,51 @@ impl Warehouse {
         }
     }
 
-    pub fn store(&mut self, cargo: Cargo) {
-        println!("{BOLD}{YELLOW}Warehouse: Received {} ({}kg) for processing/holding.{RESET}", cargo.item, cargo.actual_weight);
+    pub fn store(&mut self, mut cargo: Cargo) {
+        // Super-fridge transit rule: pause decay while moving between stations.
+        if let Some(in_transit_since_ms) = cargo.in_transit_since_ms.take() {
+            let transit_duration_ms = now_unix_ms().saturating_sub(in_transit_since_ms);
+            cargo.expiry_time_ms = cargo.expiry_time_ms.saturating_add(transit_duration_ms);
+        }
+
+        trace!("LIFECYCLE [Cargo {}]: Entered warehouse at Station {}", cargo.id, self.id);
+        debug!("Warehouse {}: Storing Cargo {} ({}kg) with expiry at {}ms", self.id, cargo.item, cargo.actual_weight, cargo.expiry_time_ms);
+        //println!("{BOLD}{YELLOW}Warehouse: Received {} ({}kg) for processing/holding.{RESET}", cargo.item, cargo.actual_weight);
         self.inventory.insert(cargo.id, cargo);
+    }
+
+    // This method checks the inventory for any cargo that has expired (current time exceeds expiry_time_ms) and removes it from the warehouse, returning a list of the IDs of the expired cargo items. This allows the station to keep track of what cargo has been lost due to expiration and report it back to the producer for transparency and debugging.
+    pub fn drop_expired_cargo(&mut self) -> Vec<u32> {
+        let now_ms = now_unix_ms();
+        let mut expired_cargo_ids = Vec::new();
+
+        self.inventory.retain(|cargo_id, cargo| {
+            let keep = now_ms < cargo.expiry_time_ms;
+            if !keep {
+                expired_cargo_ids.push(*cargo_id);
+            }
+            keep
+        });
+
+        if !expired_cargo_ids.is_empty() {
+            tracing::warn!(
+                "Warehouse: {} cargo item(s) expired and were removed: {:?}",
+                expired_cargo_ids.len(),
+                expired_cargo_ids
+            );
+        }
+
+        expired_cargo_ids
+    }
+
+    pub fn get_cargo_expiry_ms(&self, cargo_id: u32) -> Option<u64> {
+        self.inventory.get(&cargo_id).map(|cargo| cargo.expiry_time_ms)
+    }
+
+    pub fn get_cargo_times(&self, cargo_id: u32) -> Option<(u64, u64)> {
+        self.inventory
+            .get(&cargo_id)
+            .map(|cargo| (cargo.created_time_ms, cargo.expiry_time_ms))
     }
 
     pub fn process_outbound(&mut self) {
@@ -566,7 +636,7 @@ impl Warehouse {
         let fulfilled = self.inventory.len();
         self.inventory.clear();
         if fulfilled > 0 {
-            println!("{BOLD}{GREEN}Warehouse: Successfully processed and delivered {} cargo shipments to the outside world.{RESET}", fulfilled);
+            debug!("Warehouse {}: Successfully processed and delivered {} cargo shipments to the outside world.", self.id, fulfilled);
         }
     }
 
@@ -601,7 +671,10 @@ impl Warehouse {
 
     pub fn get_cargo_by_id(&mut self, id: u32) -> Result<Cargo, TrainError> {
         match self.inventory.remove(&id) {
-            Some(cargo) => Ok(cargo),
+            Some(mut cargo) => {
+                cargo.in_transit_since_ms = Some(now_unix_ms());
+                Ok(cargo)
+            }
             None => Err(TrainError::MissingCargo { cargo_id: vec![id] }),
         }
     }
@@ -865,8 +938,31 @@ impl StationState {
 
 
     pub fn handle_heartbeat(&mut self) {
-        println!("{BOLD}{CYAN}[{}]::Station {}: Heartbeat check...{RESET}", self.name, self.id);
-        // Here we can perform regular maintenance tasks like checking pending missions, gossiping about engines, etc.
+        debug!("[{}]::Station {}: Heartbeat check...", self.name, self.id);
+        // Cargo is the single source of truth for lifespan.
+        // We only drop expired cargo locally; no full-ledger synchronization pass.
+        let dropped_cargo = self.warehouse.drop_expired_cargo();
+        if !dropped_cargo.is_empty() {
+            if let Ok(mut ledger) = self.ledger.lock() {
+                for &id in &dropped_cargo {
+                    trace!("LIFECYCLE [Cargo {}]: Expired naturally in warehouse at Station {}", id, self.id);
+                }
+                ledger.cargo_expired_in_warehouse += dropped_cargo.len() as u32;
+            }
+        }
+
+        let dropped_from_purgatory = self.yard.purge_expired_cargo_from_purgatory(); // We'll let Rust's borrow checker drop this at the end of the scope
+        let dropped_from_purgatory_ids: Vec<u32> = dropped_from_purgatory.iter().map(|c| c.id).collect();
+        if !dropped_from_purgatory_ids.is_empty() {
+            if let Ok(mut ledger) = self.ledger.lock() {
+                for &id in &dropped_from_purgatory_ids {
+                    trace!("LIFECYCLE [Cargo {}]: Expired in purgatory at Station {}", id, self.id);
+                }
+                ledger.cargo_expired_in_purgatory += dropped_from_purgatory_ids.len() as u32;
+            }
+        }
+        self.expire_pending_missions_with_missing_cargo();
+
         if self.pending_missions.is_empty() {
             return;
         }
@@ -874,6 +970,32 @@ impl StationState {
         println!("{BOLD}{CYAN}[{}]::Station {}: Checking {} pending missions...{RESET}", self.name, self.id, self.pending_missions.len());
 
         self.check_pending_missions();
+    }
+
+    fn expire_pending_missions_with_missing_cargo(&mut self) {
+        let parked_missions = std::mem::take(&mut self.pending_missions);
+        let mut still_pending = Vec::new();
+
+        for mission in parked_missions {
+            let expired_or_missing = mission
+                .cargo_ids
+                .iter()
+                .copied()
+                .filter(|cargo_id| self.warehouse.get_cargo_expiry_ms(*cargo_id).is_none())
+                .collect::<Vec<u32>>();
+
+            if expired_or_missing.is_empty() {
+                still_pending.push(mission);
+            } else {
+                let details = format!(
+                    "Mission abandoned because cargo expired/missing before dispatch. Cargo IDs: {:?}",
+                    expired_or_missing
+                );
+                self.report_mission_failure(&mission, &details);
+            }
+        }
+
+        self.pending_missions = still_pending;
     }
 
 
@@ -890,8 +1012,6 @@ impl StationState {
     ) {
         println!("{BOLD}{CYAN}[{}] Received command to assemble mission {}.{RESET}", self.name, mission.id);
         
-        // 1. Paste your assemble_train logic here!
-        // First, we need to use our map! Choo choo!
 
 
 
@@ -916,7 +1036,8 @@ impl StationState {
                         let _ = sender.send(report);
                     },
                     None => {
-                        println!("{RED}[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
+                        warn!("[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to unreachable destination.", self.name, mission.id);
+                        //println!("{RED}[{}] DEAD-LETTER: No reply channel available to report assembly failure for mission {} due to unreachable destination.{RESET}", self.name, mission.id);
                     }
                 }
                 return;
@@ -930,9 +1051,8 @@ impl StationState {
 
         // At this point, we have the distance and route calculated, so we can proceed with the assembly logic using these values.
 
-        // Now for the fun part: we're going to completely rewrite assemble_train as part of the Station's responsibilities, because the Station is now the mastermind behind the whole operation, and it needs to have access to its internal state (the yard and roundhouse) to pull this off. The network is just a map and dispatcher, so it makes more sense for the Station to handle the assembly logic directly.
-
-        println!("{BOLD}{CYAN}[{}]::Station {}: Starting assembly for Mission {}: {}kg to {} via {:?}.{RESET}", self.name, self.id, mission.id, mission.cargo_ids.len(), mission.destination, route);
+        info!("[{}]::Station {}: Starting assembly for Mission {}: {}kg to {} via {:?}.", self.name, self.id, mission.id, mission.cargo_ids.len(), mission.destination, route);
+        //println!("{BOLD}{CYAN}[{}]::Station {}: Starting assembly for Mission {}: {}kg to {} via {:?}.{RESET}", self.name, self.id, mission.id, mission.cargo_ids.len(), mission.destination, route);
         // The first thing we need to do is figure out the total weight of the cargo, because that will determine which engines we can use. 
         let total_cargo_weight = match self.warehouse.get_total_cargo_weight(&mission) {
             Ok(weight) => {
@@ -1100,7 +1220,9 @@ impl StationState {
 
         // If we made it this far, it means we have a suitable engine and enough empty cars, so now we can actually pull the cargo out of the warehouse and continue with the assembly process.
         let cargo: Vec<Cargo> = match self.warehouse.get_cargo_by_ids(&mission.cargo_ids) {
-            Ok(cargo) => cargo,
+            Ok(cargo) => {
+                cargo
+            },
             Err(e) => {
                 println!("{RED}Warehouse Error: Failed to retrieve cargo for Mission {}: {:?}.{RESET}", mission.id, e);
                 let details = "Failed to retrieve cargo for the mission. This likely means that one or more cargo items specified in the mission's cargo_ids are missing from the warehouse inventory, which is critical for fulfilling the mission's objectives. Please investigate the warehouse inventory and ensure that all cargo items for this mission are properly stored and accounted for.";
@@ -1135,7 +1257,14 @@ impl StationState {
             report_to: mission.reply_channel.clone(),
         };
 
-        self.dispatch_train(train, route);
+
+        for car in &train.cars {
+            trace!("LIFECYCLE [Cargo {}]: Loaded onto train {} for Mission {}", &car.cargo.as_ref().unwrap().id, train.id, mission.id);
+        }
+
+    
+
+        self.dispatch_train(train, route, self.ledger.clone());
     }
 
     
@@ -1155,11 +1284,14 @@ pub fn retry_pending_missions(&mut self) {
     pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
 
 
+        // Send success back to transit thread so it can terminate.
+        train.engine.refuel(); 
+
 
         if let Some(request_id) = train.request_id {
 
             if !train.cars.is_empty() {
-                println!("{RED}Warning: Train {} arrived with cars attached during an emergency engine transfer. This should not happen, as SOS protocol dictates that all cargo must be removed before sending an SOS. The attached cars will be processed as part of the salvage operation, but this indicates a breach of protocol that should be investigated.{RESET}", train.id);
+                error!("Warning: Train {} arrived with cars attached during an emergency engine transfer. This should not happen, as SOS protocol dictates that all cargo must be removed before sending an SOS. The attached cars will be processed as part of the salvage operation, but this indicates a breach of protocol that should be investigated.", train.id);
                 panic!("Protocol breach: SOS train arrived with cars attached. This should never happen and indicates a critical failure in the SOS procedure. Immediate investigation required.");
             }
             
@@ -1175,10 +1307,9 @@ pub fn retry_pending_missions(&mut self) {
             return;
         }
 
+        //train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey or for disassembly if this is the final destination.
 
-
-        let _ = reply_to.send(Ok(())); // Send success back to transit thread so it can terminate.
-        train.engine.refuel(); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey or for disassembly if this is the final destination.
+        let _ = reply_to.send(Ok(())); // Refuel the engine upon arrival to ensure it's ready for the next leg of the journey or for disassembly if this is the final destination.
         //println!("{:?}", train);
         println!("{GREEN}[{}]::Station {}: Processing arrival of Train {}.{RESET}", self.name, self.id, train.id);
         let final_destination = train.destination;
@@ -1196,7 +1327,12 @@ pub fn retry_pending_missions(&mut self) {
             //engine.refuel(); // We can refuel the engine before returning it to the roundhouse
             self.roundhouse.house(engine);
             // 2. Return the Cars
-            let failed_ids = self.process_cars(cars, mission_id); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
+            for car in &cars {
+                if let Some(cargo) = &car.cargo {
+                    trace!("LIFECYCLE [Cargo {}]: Successfully delivered and processed at destination {}!", cargo.id, self.id);
+                }
+            }
+            let failed_ids = self.process_cars(cars, mission_id, true); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
 
             if failed_ids.is_empty() {
                 
@@ -1256,7 +1392,7 @@ pub fn retry_pending_missions(&mut self) {
                     return;
                 }
             };
-            self.dispatch_train(train, route);               
+            self.dispatch_train(train, route, self.ledger.clone());               
         }
     }
 
@@ -1266,10 +1402,16 @@ pub fn retry_pending_missions(&mut self) {
         
         // We'll need the surviving cargo ids to create the replacement freight order. This ensures that they can be accessed by the producer of the replacement train, so they can be loaded into the new train and continue on their journey to the original destination.
         let salvaged_cargo_ids = surviving_cars.iter().filter_map(|car| car.cargo.as_ref().map(|cargo| cargo.id)).collect::<Vec<u32>>();
-        
-
+        // Copilot was here! Successfully extracting the cargo IDs from the surviving cars, which is crucial for creating accurate replacement freight orders and ensuring that the salvaged cargo can continue its journey to the original destination. This step is essential for maintaining the integrity of the mission and providing transparency in the reporting of the salvage operation.
+        for &cargo_id in &salvaged_cargo_ids {
+            trace!("LIFECYCLE [Cargo {}]: Salvaged from derailment and dumped into Station {}", cargo_id, self.id);
+        }
         //processes cars and returns any issues to report, such as cars that failed intake and had to be moved to purgatory. We can include this information in the MissionReport to provide transparency about the salvage operation and any losses incurred.
-        let stranded_issues = self.process_cars(surviving_cars, Some(mission_id)); // We can extract this logic into a separate method to keep things cleaner, and it can return the ledger of any failed cars for reporting.
+        let stranded_issues = self.process_cars(surviving_cars, Some(mission_id), false); // stranded cars absolutely go back into the warehouse
+        let salvaged_cargo_times = salvaged_cargo_ids
+            .iter()
+            .filter_map(|cargo_id| self.warehouse.get_cargo_times(*cargo_id).map(|times| (*cargo_id, times)))
+            .collect::<Vec<(u32, (u64, u64))>>();
 
         let reason: String = if stranded_issues.is_empty() {
             //"Engine lost, but all surviving cars were successfully salvaged.".to_string()
@@ -1277,16 +1419,32 @@ pub fn retry_pending_missions(&mut self) {
         } else {
             format!("Engine lost, and some cars failed intake and sit in purgatory: {:?}.", stranded_issues)
         };
-        let replacement_freight_order: FreightOrder = FreightOrder {
-            id: mission_id, // Use the existing mission ID for the replacement freight order
-            cargo_ids: salvaged_cargo_ids,
-            destination,
-            origin: self.id,
-            ttl: 5,
-        };
-
         let mut ledger_access = self.ledger.lock().unwrap();
-        ledger_access.pending_cargo.push(replacement_freight_order);
+        // Keep ownership per cargo: one replacement order per surviving cargo item.
+        if salvaged_cargo_times.len() == 1 {
+            let (cargo_id, (created_time_ms, expiry_time_ms)) = salvaged_cargo_times[0];
+            let replacement_freight_order = FreightOrder::new(
+                mission_id, // Preserve current mission id in the common single-cargo case.
+                vec![cargo_id],
+                self.id,
+                destination,
+                created_time_ms,
+                expiry_time_ms,
+            );
+            ledger_access.pending_cargo.push(replacement_freight_order);
+        } else {
+            for (cargo_id, (created_time_ms, expiry_time_ms)) in salvaged_cargo_times {
+                let replacement_freight_order = FreightOrder::new(
+                    GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst),
+                    vec![cargo_id],
+                    self.id,
+                    destination,
+                    created_time_ms,
+                    expiry_time_ms,
+                );
+                ledger_access.pending_cargo.push(replacement_freight_order);
+            }
+        }
 
         self.send_partial_failure_report(mission_id, &reason, &stranded_issues, report_to);
         self.print_status();
@@ -1313,15 +1471,18 @@ pub fn retry_pending_missions(&mut self) {
                     }
 
                     let item_id = cargo.id;
+                    let created_time_ms = cargo.created_time_ms;
+                    let expiry_time_ms = cargo.expiry_time_ms;
                     self.warehouse.store(cargo); 
 
-                    let freight_order = FreightOrder {
-                        id: GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst), // Generate a new unique order ID for this cargo
-                        cargo_ids: vec![item_id], // Create a freight order for this individual cargo item
-                        destination, // Use the previously determined destination
-                        origin: self.id,
-                        ttl: 5,
-                    };
+                    let freight_order = FreightOrder::new(
+                        GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst),
+                        vec![item_id],
+                        self.id,
+                        destination,
+                        created_time_ms,
+                        expiry_time_ms,
+                    );
 
                     let mut ledger_access = self.ledger.lock().unwrap();
                     ledger_access.pending_cargo.push(freight_order);
@@ -1348,7 +1509,9 @@ pub fn retry_pending_missions(&mut self) {
     }
 
     fn handle_intake_cargo (&mut self, cargo: Vec<Cargo>, reply_to: Option<Sender<Result<(), TrainError>>>) {
-        println!("{BOLD}{CYAN}[{}] Receiving {} cargo shipments into the warehouse.{RESET}", self.name, cargo.len());
+        debug!("{}[{}]::Station {}: Handling intake of {} cargo items: {:#?}...{}", BOLD, self.name, self.id, cargo.len(), cargo, RESET);
+        
+        //println!("{BOLD}{CYAN}[{}] Receiving {} cargo shipments into the warehouse.{RESET}", self.name, cargo.len());
         //create MutexGuard to access the ledger and log the incoming cargo.
         let mut ledger_access = self.ledger.lock().unwrap();
         for item in cargo {
@@ -1363,16 +1526,18 @@ pub fn retry_pending_missions(&mut self) {
             }
 
             let item_id = item.id;
+            let created_time_ms = item.created_time_ms;
+            let expiry_time_ms = item.expiry_time_ms;
             self.warehouse.store(item);
 
-            ledger_access.pending_cargo.push(FreightOrder {
-                id: GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst), // Generate a new unique order ID for this cargo
-                cargo_ids: vec![item_id], // Create a freight order for this individual cargo item
-                //set destination to a random station, u32 between 0 and 6
-                destination, // Use the previously determined destination
-                origin: self.id,
-                ttl: 5,
-            });
+            ledger_access.pending_cargo.push(FreightOrder::new(
+                GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst),
+                vec![item_id],
+                self.id,
+                destination,
+                created_time_ms,
+                expiry_time_ms,
+            ));
 
         }
         if let Some(channel) = reply_to {
@@ -1409,7 +1574,7 @@ pub fn retry_pending_missions(&mut self) {
             
             //let _ = self.yard.receive_car(new_car); 
             if let Err((homeless_car, error)) = self.yard.receive_car(new_car) {
-                println!("{RED}Failed to receive generated empty car with ID {}: {:?}. Moving to purgatory.{RESET}", safe_id, error);
+                println!("{RED}This should never happen, but just in case: Car ID {}: {:?}. Moving to purgatory.{RESET}", safe_id, error); // If we fail to receive the car we just created, that's a critical issue that indicates a problem with the yard's ability to manage its inventory
                 let rejected_asset = RejectedAsset::new(homeless_car, error, None);
                 self.yard.purgatory.push(rejected_asset);
             }
@@ -1532,7 +1697,7 @@ pub fn retry_pending_missions(&mut self) {
                         destination: requester_id,
                         report_to: None,
                     };
-                    self.dispatch_train(temp_train, route_to_requester);
+                    self.dispatch_train(temp_train, route_to_requester, self.ledger.clone());
 
                     // After dispatching the engine, we need to check if we should forward the request to our neighbors to see if they can also fulfill it, in case the requester needs multiple engines or if the requester is actually looking for an engine that meets the minimum capacity but also has other specific requirements that this engine doesn't meet. We can use the TTL to determine if we should forward the request, and we can use the branch_notified array to keep track of which neighbors have already been notified about this request to prevent loops. We will only forward the request if the TTL is greater than 0, and we will decrement the TTL before forwarding. We will also add this station's ID to the branch_notified array before forwarding, and we will increment the notified_count to keep track of how many neighbors have been notified.
                     println!("{YELLOW}Roundhouse {}: Checking if we should forward the engine request to neighbors after dispatching an engine to requester {}.{RESET}", self.id, requester_id);
@@ -1726,15 +1891,23 @@ pub fn retry_pending_missions(&mut self) {
 
 
     // This is a helper method for processing incoming cars, both from train arrivals and from external sources. It attempts to receive each car into the yard, and if the car contains cargo, it moves the cargo into the warehouse. If any issues arise during this process (such as contraband detection or other intake errors), it logs the issue, moves the car to purgatory, and collects the IDs of any cars that failed intake to include in the MissionReport for transparency.
-    pub fn process_cars (&mut self, cars: Vec<TrainCar>, mission_id: Option<u32>) -> Vec<u32> {
+    pub fn process_cars (&mut self, cars: Vec<TrainCar>, mission_id: Option<u32>, is_final_destination: bool) -> Vec<u32> {
         let mut failed_ids = Vec::new(); // We can fill this with any issues that arise during processing, and then include it in the MissionReport for transparency and debugging. For now, we'll just keep it empty to represent a perfect process.
         for car in cars {
-            let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
+            //let car_id_we_just_received = car.id; // Store the ID before we potentially move the car into purgatory
             match self.yard.receive_car(car) {
-                Ok(Some(cargo)) => { self.warehouse.store(cargo); },
+                Ok(Some(cargo)) => { 
+                    if is_final_destination {
+                        trace!("LIFECYCLE [Cargo {}]: Successfully fully processed and consumed at destination {}!", cargo.id, self.id);
+                    } else {
+                        self.warehouse.store(cargo); 
+                    }
+                },
                 Ok(None) => {}, // Car is empty but safely in the yard
                 Err((homeless_car, e)) => {
-                    println!("{RED}Failed to process Car {} during intake: {:?}. Moving to purgatory.{RESET}", car_id_we_just_received, e);
+                    trace!("Failed to process Cargo {} in Car {} due to {:?}. Moving car to purgatory in Station {}.", homeless_car.cargo.as_ref().map(|c| c.id).unwrap_or(0), homeless_car.id, e, self.id);
+
+                    //println!("{RED}Failed to process Car {} during intake: {:?}. Moving to purgatory.{RESET}", car_id_we_just_received, e);
                     failed_ids.push(homeless_car.id); // Log the ID of the car that caused issues for transparency
                     let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id);
                     self.yard.purgatory.push(rejected_asset);
@@ -1747,7 +1920,7 @@ pub fn retry_pending_missions(&mut self) {
     }
 
     // helper method for the "dispatch train" phase of the mission. This is where we spawn a thread to simulate the train's journey to the next station, and we handle the logic for potential derailments during transit.
-    pub fn dispatch_train(&self, mut train: Train, route: Vec<u32>) {
+    pub fn dispatch_train(&self, mut train: Train, route: Vec<u32>, ledger: Arc<Mutex<GlobalLedger>>) {
         let final_destination = train.destination;
         let station_tx_clone = self.tx.clone(); // Clone the station's own Sender for use in this method, so we can send SOS if needed
 
@@ -1762,7 +1935,7 @@ pub fn retry_pending_missions(&mut self) {
 
         thread::spawn(move || {
             let time_to_travel = train.dispatch(distance_to_next_stop).expect("Failed to dispatch"); // This calculates the time to travel to the next station based on the distance and the engine's speed. 
-            println!("{BOLD}{YELLOW}[{}::Station {}: Train {} is en route on Mission {} to next stop [Station {}]. Estimated time: {:.2} seconds.{RESET}", station_name_clone, station_id_clone, train_id, train.mission_id.unwrap_or(0), next_stop, time_to_travel);
+            tracing::info!("[{}::Station {}: Train {} is en route on Mission {} to next stop [Station {}]. Estimated time: {:.2} seconds.", station_name_clone, station_id_clone, train_id, train.mission_id.unwrap_or(0), next_stop, time_to_travel);
             thread::sleep(std::time::Duration::from_secs_f64(time_to_travel)); // Simulate travel time to the next station. In a real implementation, this would be based on distance and train speed.
 
             // Using rand, simulate the train crashing with a 10% chance during transit. If it crashes, we issue a Derailment report back to transit_rx and skip the rest of the transit logic. The train is lost, so we don't send it to the next station. However, we return the salvaged TrainCars back to the yard for processing, and we send a MissionReport::Failure back to the mission's reply channel with details of the crash.
@@ -1771,11 +1944,13 @@ pub fn retry_pending_missions(&mut self) {
                 
 
                 if let Some(request_id) = train.request_id {
-                    println!("{RED}🚨 DERAILMENT: Emergency engine transfer Train {}!{RESET} for engine request {} for mission {}. No cargo to salvage.{RESET}", train_id, request_id, train.mission_id.unwrap_or(0));
+                    tracing::error!("🚨 DERAILMENT: Emergency engine transfer Train {}! for engine request {} for mission {}. No cargo to salvage.", train_id, request_id, train.mission_id.unwrap_or(0));
                 } else if let Some(mission_id) = train.mission_id {
                     if !train.cars.is_empty() {
-                        println!("{RED}🚨 DERAILMENT: Train {}!{RESET} for mission {}. Salvaging surviving cars...{RESET}", train_id, mission_id);
+                        tracing::error!("🚨 DERAILMENT: Train {}! for mission {}. Salvaging surviving cars...", train_id, mission_id);
 
+
+                        ledger.lock().unwrap().trains_derailed += 1; // Update the ledger to reflect the derailment
                         station_tx_clone.send(StationCommand::HandleEmergencySOS {
                             mission_id,
                             destination: train.destination,
