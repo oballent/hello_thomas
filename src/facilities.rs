@@ -1339,11 +1339,18 @@ pub fn retry_pending_missions(&mut self) {
                 let details = "Successfully disassembled train and processed all cargo without issues.";
                 self.send_success_report(mission_id.expect("Unloading cargo after receiving a train implies a Mission is involved! There should be an id!"), details, report_to);
             } else {
-                let details = "Partial success during train disassembly. Some items in purgatory.";
-                 self.send_partial_failure_report(mission_id.expect("Unloading cargo after receiving a train implies a Mission is involved! There should be an id!"), details, &failed_ids, report_to);
+                let reason = format!(
+                    "Train reached destination, but intake failed and cargo was moved to purgatory. Car IDs: {:?}",
+                    failed_ids
+                );
+                self.send_failure_report(
+                    mission_id.expect("Unloading cargo after receiving a train implies a Mission is involved! There should be an id!"),
+                    &reason,
+                    report_to,
+                );
             }
 
-            self.print_status();
+            //self.print_status();
 
             
 
@@ -1377,6 +1384,7 @@ pub fn retry_pending_missions(&mut self) {
                             Ok(None) => {}, // Car is empty but safely in the yard
                             Err((homeless_car, e)) => {
                                 println!("{RED}Train {}: Failed to process Car {} during salvage: {:?}. Moving to purgatory.{RESET}", train.id, car_id, e);
+                                self.ledger.lock().unwrap().cargo_went_to_purgatory += 1;
                                 let rejected_asset = RejectedAsset::new(homeless_car, e, train.mission_id,);
                                 self.yard.purgatory.push(rejected_asset);
                             }
@@ -1408,7 +1416,7 @@ pub fn retry_pending_missions(&mut self) {
         }
         //processes cars and returns any issues to report, such as cars that failed intake and had to be moved to purgatory. We can include this information in the MissionReport to provide transparency about the salvage operation and any losses incurred.
         let stranded_issues = self.process_cars(surviving_cars, Some(mission_id), false); // stranded cars absolutely go back into the warehouse
-        let salvaged_cargo_times = salvaged_cargo_ids
+        let salvaged_cargo_items = salvaged_cargo_ids
             .iter()
             .filter_map(|cargo_id| self.warehouse.get_cargo_times(*cargo_id).map(|times| (*cargo_id, times)))
             .collect::<Vec<(u32, (u64, u64))>>();
@@ -1421,8 +1429,8 @@ pub fn retry_pending_missions(&mut self) {
         };
         let mut ledger_access = self.ledger.lock().unwrap();
         // Keep ownership per cargo: one replacement order per surviving cargo item.
-        if salvaged_cargo_times.len() == 1 {
-            let (cargo_id, (created_time_ms, expiry_time_ms)) = salvaged_cargo_times[0];
+        if salvaged_cargo_items.len() == 1 {
+            let (cargo_id, (created_time_ms, expiry_time_ms)) = salvaged_cargo_items[0];
             let replacement_freight_order = FreightOrder::new(
                 mission_id, // Preserve current mission id in the common single-cargo case.
                 vec![cargo_id],
@@ -1433,7 +1441,7 @@ pub fn retry_pending_missions(&mut self) {
             );
             ledger_access.pending_cargo.push(replacement_freight_order);
         } else {
-            for (cargo_id, (created_time_ms, expiry_time_ms)) in salvaged_cargo_times {
+            for (cargo_id, (created_time_ms, expiry_time_ms)) in salvaged_cargo_items {
                 let replacement_freight_order = FreightOrder::new(
                     GLOBAL_ORDER_ID.fetch_add(1, Ordering::SeqCst),
                     vec![cargo_id],
@@ -1446,8 +1454,12 @@ pub fn retry_pending_missions(&mut self) {
             }
         }
 
-        self.send_partial_failure_report(mission_id, &reason, &stranded_issues, report_to);
-        self.print_status();
+        if stranded_issues.is_empty() {
+            self.send_partial_failure_report(mission_id, &reason, &stranded_issues, report_to);
+        } else {
+            self.send_failure_report(mission_id, &reason, report_to);
+        }
+        //self.print_status();
     }
 
 
@@ -1491,6 +1503,7 @@ pub fn retry_pending_missions(&mut self) {
                 Err((homeless_car, e)) => {
                     intake_issues.push(homeless_car.id);
                     println!("{RED} Failed to process Car {} during intake: {:?}. Moving to purgatory.{RESET}", car_id, e);
+                    self.ledger.lock().unwrap().cargo_went_to_purgatory += 1;
                     let rejected_asset = RejectedAsset::new(homeless_car, e, None); // We don't have a mission ID in this context, so we can pass None
                     self.yard.purgatory.push(rejected_asset);
                 }
@@ -1906,7 +1919,8 @@ pub fn retry_pending_missions(&mut self) {
                 Ok(None) => {}, // Car is empty but safely in the yard
                 Err((homeless_car, e)) => {
                     trace!("Failed to process Cargo {} in Car {} due to {:?}. Moving car to purgatory in Station {}.", homeless_car.cargo.as_ref().map(|c| c.id).unwrap_or(0), homeless_car.id, e, self.id);
-
+                    let mut ledger = self.ledger.lock().unwrap();
+                    ledger.cargo_went_to_purgatory += 1;
                     //println!("{RED}Failed to process Car {} during intake: {:?}. Moving to purgatory.{RESET}", car_id_we_just_received, e);
                     failed_ids.push(homeless_car.id); // Log the ID of the car that caused issues for transparency
                     let rejected_asset = RejectedAsset::new(homeless_car, e, mission_id);

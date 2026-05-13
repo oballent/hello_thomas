@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use tracing::{info, debug, warn, error};
+use tracing::{info, debug, warn, error, trace};
 
 use crate::network::GlobalLedger;
 
@@ -148,13 +148,17 @@ impl Producer {
                     let mut selected = None;
                     while let Some(mut order) = ledger_access.pending_cargo.pop() {
                         if order.is_expired(now_ms) {
+                            let expired_units = order.cargo_ids.len().max(1) as u32;
                             warn!(
-                                "Producer {} dropped expired freight order {} for cargo IDs {:?}.",
+                                "Producer {} dropped expired freight order {} for cargo IDs: {:?}.",
                                 self.id,
                                 order.id,
                                 order.cargo_ids
                             );
-                            //ledger_access.cargo_expired_in_warehouse += 1;
+                            ledger_access.freight_orders_expired_before_pickup += expired_units;
+                            // This is a terminal cargo loss before dispatch, so it counts as mission failure.
+                            ledger_access.missions_failed += expired_units;
+                            trace!("LIFECYCLE [FreightOrder {}]: Expired in Global Ledger before pickup. Origin: Station {}, Destination: Station {}. As Cargo id {:?}.", order.id, order.origin, order.destination, order.cargo_ids);
                             continue;
                         }
                         order.refresh_progress(now_ms);
@@ -168,7 +172,7 @@ impl Producer {
 
                 //if we got an assignment, we send it!
                 if let Some(mut freight_order) = my_assignment {
-                    info!("Producer {} claimed cargo IDs {:?}. Building mission...", self.id, freight_order.cargo_ids);
+                    info!("Producer {} claimed cargo IDs: {:?}. Building mission...", self.id, freight_order.cargo_ids);
 
                     let (tx_report, rx_report) = mpsc::channel();
 
@@ -188,7 +192,7 @@ impl Producer {
                     
                     
                     if let Some(origin_tx) = self.switchboard.get(&freight_order.origin) {
-                        info!("Producer {} is sending mission {} for cargo IDs {:?} to Station {}...", self.id, mission.id, freight_order.cargo_ids, freight_order.origin);
+                        info!("Producer {} is sending mission {} for cargo IDs: {:?} to Station {}...", self.id, mission.id, freight_order.cargo_ids, freight_order.origin);
 
                         
                         origin_tx.clone().send(StationCommand::AssembleMission { 
@@ -228,7 +232,8 @@ impl Producer {
                         Ok(MissionReport::PartialFailure(details)) => {
                             //println!("{YELLOW} Producer {} partial failure: {}", self.id, details);
                             warn!("Producer {} partial failure: {}", self.id, details);
-                            self.ledger.lock().unwrap().missions_failed += 1;
+                            // Partial failures are non-terminal status updates (for example, derailment with full salvage).
+                            // Terminal loss cases are reported as MissionReport::Failure.
                         }
                         Ok(MissionReport::Failure(details)) => { 
                             // Producer is now observer-only for failures; station-side recovery owns retries.
@@ -268,7 +273,7 @@ impl Producer {
                     active = false;
                 } else {
                     //sleep to avoid burning CPU cycles while waiting for Stations to report back. In a real system, we would want a more sophisticated event-driven approach rather than just sleeping, but this is fine for our simulation.
-                    thread::sleep(std::time::Duration::from_millis(500));
+                    thread::sleep(std::time::Duration::from_millis(1));
                 }
 
 

@@ -470,7 +470,7 @@ use rand::Rng; // Add this to the top of main.rs!
         let mut incoming_cargo = Vec::new();
         let mut incoming_orders = Vec::new();
 
-        for _ in 0..10 {
+        for _ in 0..22 {
             // Pick a random destination that IS NOT the current station
             let mut dest_id = rng.gen_range(0..config.stations.len() as u32);
             while dest_id == origin_id {
@@ -480,7 +480,7 @@ use rand::Rng; // Add this to the top of main.rs!
             // Generate random weight between 100kg and 4000kg
             let random_weight = rng.gen_range(100..=4000);
             let random_item = item_types[rng.gen_range(0..item_types.len())].to_string();
-            let random_ttl = rng.gen_range(8..=20);
+            let random_ttl = rng.gen_range(10..=22);
             let created_time_ms = now_unix_ms();
             let expiry_time_ms = created_time_ms.saturating_add((random_ttl as u64).saturating_mul(STATION_HEARTBEAT_MS));
 
@@ -586,6 +586,10 @@ use rand::Rng; // Add this to the top of main.rs!
     //println!("{YELLOW}Waiting for producer threads to complete...{RESET}");
         producer_1_handle.join().unwrap();//this is like a gate that ensures the main thread waits for producer 1
         producer_2_handle.join().unwrap();//this as well, but for gate 2 and producer 2.
+        for station in &config.stations {
+            let tx = temporary_switchboard.get(&station.id).expect("Channel missing!").clone();
+            //tx.send(StationCommand::PrintStatus).unwrap();
+        }
         info!("GlobalLedger Status: {:#?}", shared_ledger.lock().unwrap());
     info!("Simulation Complete.");
 

@@ -51,7 +51,9 @@ pub struct GlobalLedger {
     pub missions_completed: u32,
     pub missions_failed: u32,
     pub cargo_expired_in_warehouse: u32,
+    pub cargo_went_to_purgatory: u32,
     pub cargo_expired_in_purgatory: u32,
+    pub freight_orders_expired_before_pickup: u32,
     pub trains_derailed: u32,
 }
 
@@ -64,7 +66,9 @@ impl GlobalLedger {
             missions_completed: 0,
             missions_failed: 0,
             cargo_expired_in_warehouse: 0,
+            cargo_went_to_purgatory: 0,
             cargo_expired_in_purgatory: 0,
+            freight_orders_expired_before_pickup: 0,
             trains_derailed: 0,
         }
     }
