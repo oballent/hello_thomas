@@ -1,14 +1,6 @@
-use std::hash::Hash;
-//use std::os::windows::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::collections::HashMap;
-use std::cmp::Ordering;
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use tracing::{info, debug, warn, error, trace};
-
-use crate::network::GlobalLedger;
+use std::sync::mpsc::Sender;
+use tracing::{debug, info, warn};
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -26,9 +18,10 @@ pub fn now_unix_ms() -> u64 {
         .unwrap_or(0)
 }
 
-// ((expire - created) - (expire - now)) / (expire - created)
-// Equivalent to (now - created) / (expire - created), clamped to [0, 1].
-pub fn decay_progress_ratio_ppm(created_time_ms: u64, expiry_time_ms: u64, now_ms: u64) -> u64 {
+// Priority quotient for scheduling:
+// (current_time - created_time) / (expire_time - created_time)
+// Returned in parts-per-million (0..=1_000_000), clamped to [0, 1].
+pub fn priority_quotient_ppm(created_time_ms: u64, expiry_time_ms: u64, now_ms: u64) -> u64 {
     let lifespan_ms = expiry_time_ms.saturating_sub(created_time_ms);
     if lifespan_ms == 0 {
         return 1_000_000;
@@ -41,6 +34,9 @@ pub fn decay_progress_ratio_ppm(created_time_ms: u64, expiry_time_ms: u64, now_m
     ((elapsed_ms as u128 * 1_000_000u128) / lifespan_ms as u128) as u64
 }
 
+pub fn decay_progress_ratio_ppm(created_time_ms: u64, expiry_time_ms: u64, now_ms: u64) -> u64 {
+    priority_quotient_ppm(created_time_ms, expiry_time_ms, now_ms)
+}
 
 
 
@@ -48,257 +44,19 @@ pub fn decay_progress_ratio_ppm(created_time_ms: u64, expiry_time_ms: u64, now_m
 
 
 
-//#[derive(Clone)]
+
+
+
+
+
+
+
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-// The "Ticket" on the Marketplace board
-pub struct FreightOrder {
-    pub id: u32,
-    pub cargo_ids: Vec<u32>, // In a more complex system, a single freight order might involve multiple pieces of cargo that need to be shipped together. For simplicity, we can assume each freight order corresponds to one piece of cargo, but using a Vec allows for future expansion without changing the data structure.
-    pub origin: u32, // So the Producer knows which tx channel to use!
-    pub destination: u32,
-    pub created_time_ms: u64,
-    pub expiry_time_ms: u64,
-    pub progress_ppm: u64, // Priority key for BinaryHeap using decay-progress formula.
-}
-
-impl FreightOrder {
-    pub fn new(
-        id: u32,
-        cargo_ids: Vec<u32>,
-        origin: u32,
-        destination: u32,
-        created_time_ms: u64,
-        expiry_time_ms: u64,
-    ) -> Self {
-        let now_ms = now_unix_ms();
-        Self {
-            id,
-            cargo_ids,
-            origin,
-            destination,
-            created_time_ms,
-            expiry_time_ms,
-            progress_ppm: decay_progress_ratio_ppm(created_time_ms, expiry_time_ms, now_ms),
-        }
-    }
-
-    pub fn refresh_progress(&mut self, now_ms: u64) {
-        self.progress_ppm = decay_progress_ratio_ppm(self.created_time_ms, self.expiry_time_ms, now_ms);
-    }
-
-    pub fn is_expired(&self, now_ms: u64) -> bool {
-        now_ms >= self.expiry_time_ms
-    }
-}
-
-impl Ord for FreightOrder {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.progress_ppm
-            .cmp(&other.progress_ppm)
-            // Tie-breaker: sooner expiry is more urgent.
-            .then_with(|| other.expiry_time_ms.cmp(&self.expiry_time_ms))
-            .then_with(|| self.id.cmp(&other.id))
-    }
-}
-
-impl PartialOrd for FreightOrder {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-pub struct Producer {
-    pub id: u32,
-    pub ledger: Arc<Mutex<GlobalLedger>>, // The source of truth for pending cargo and active missions. 
-    pub switchboard: HashMap<u32, Sender<StationCommand>>, // Maps station IDs to their command channels
-}
-
-impl Producer {
-    pub fn new(id: u32, ledger: Arc<Mutex<GlobalLedger>>, switchboard: HashMap<u32, Sender<StationCommand>>) -> Self {
-        Producer {
-            id,
-            ledger,
-            switchboard,
-        }
-    }
-
-    pub fn start(self) -> JoinHandle<()> {
-        thread::spawn(move || {
-            info!("Producer {} is starting up...", self.id);
-            // We still pull the pending cargo from the ledger, but we do it inside the thread so that we have access to the switchboard and can send commands to the stations.
-            
-            let mut active_monitors: Vec<(Receiver<MissionReport>, FreightOrder)> = Vec::new(); // This pairs the mission report channels with their corresponding freight orders so we can keep track of which reports belong to which missions. Alternatively, we could just use missions, as mission is made up of freight order and the producer's reply channel. We'll probably change this later.
-            let mut active: bool = true;
-
-            while active {
-                info!("while active loop start for Producer {}", self.id);
-                // 2. Create a temporary variable to hold our assignment (if we get one)
-                let my_assignment: Option<FreightOrder> = {
-                    info!("Producer {} is waiting for the Talking Stick to check the Global Ledger for pending cargo...", self.id);
-                    
-                    // 3. Wait in line for the Talking Stick
-                    // --- LOCK ACQUIRED ---
-                    let mut ledger_access = self.ledger.lock().unwrap();
-                    
-                    // 4. We now have exclusive, mutable access to the GlobalLedger!
-
-                    info!("There are currently {} items waiting to be shipped.", ledger_access.pending_cargo.len());
-                    let now_ms = now_unix_ms();
-                    // Keep popping until we find a live order or run out.
-                    let mut selected = None;
-                    while let Some(mut order) = ledger_access.pending_cargo.pop() {
-                        if order.is_expired(now_ms) {
-                            let expired_units = order.cargo_ids.len().max(1) as u32;
-                            warn!(
-                                "Producer {} dropped expired freight order {} for cargo IDs: {:?}.",
-                                self.id,
-                                order.id,
-                                order.cargo_ids
-                            );
-                            ledger_access.freight_orders_expired_before_pickup += expired_units;
-                            // This is a terminal cargo loss before dispatch, so it counts as mission failure.
-                            ledger_access.missions_failed += expired_units;
-                            trace!("LIFECYCLE [FreightOrder {}]: Expired in Global Ledger before pickup. Origin: Station {}, Destination: Station {}. As Cargo id {:?}.", order.id, order.origin, order.destination, order.cargo_ids);
-                            continue;
-                        }
-                        order.refresh_progress(now_ms);
-                        selected = Some(order);
-                        break;
-                    }
-                    selected
-                    
-                }; // --- LOCK DROPPED AUTOMATICALLY HERE! ---
-                // 5. Now we are outside the lock. The ledger is free for other threads.
-
-                //if we got an assignment, we send it!
-                if let Some(mut freight_order) = my_assignment {
-                    info!("Producer {} claimed cargo IDs: {:?}. Building mission...", self.id, freight_order.cargo_ids);
-
-                    let (tx_report, rx_report) = mpsc::channel();
-
-
-                    // Build our Mission for this single piece of cargo
-                    
-                    let mission = Mission {
-                        id: freight_order.id, // We can use the freight order ID as the mission ID for simplicity, since each mission corresponds to a single freight order in this case. In a more complex system, we might want to have a separate ID generator for missions, but for this example, using the freight order ID works fine and keeps things straightforward.
-                        request_id: (10 * freight_order.id) + freight_order.id, // Just an example of how we might generate a request ID based on the freight order ID. This is arbitrary and can be adjusted as needed.
-                        attempts: 0, // Initialize attempts to 0
-                        highpriority: false, // Initialize highpriority to false
-                        origin: freight_order.origin,
-                        destination: freight_order.destination,
-                        cargo_ids: freight_order.cargo_ids.clone(), // Assuming each cargo requires one car with the same ID as the cargo for simplicity. In a real system, we would need more complex logic to determine which cars are needed for which cargo.
-                        reply_channel: Some(tx_report.clone()), // The producer's channel to receive updates about this mission
-                    };
-                    
-                    
-                    if let Some(origin_tx) = self.switchboard.get(&freight_order.origin) {
-                        info!("Producer {} is sending mission {} for cargo IDs: {:?} to Station {}...", self.id, mission.id, freight_order.cargo_ids, freight_order.origin);
-
-                        
-                        origin_tx.clone().send(StationCommand::AssembleMission { 
-                            mission, // <-- Idiomatic Rust shorthand!
-                        }).expect("Failed to send AssembleMission command over open channel");
-
-                        // // The Tiny Intern Thread!
-                        // thread::spawn(move || {
-                        //     if let Ok(report) = rx_report.recv() {
-                        //         println!("Producer {} received report: {:?}", self.id, report);
-                        //     }
-                        // });
-
-                        active_monitors.push((rx_report, freight_order));// We can store our rx_report and wait for a response from tx_report outside the loop, which allows us to continue claiming missions and sending them to the stations without blocking on waiting for the reports. This is called batching, and it's a common technique in asynchronous programming to allow for more efficient use of resources and better responsiveness.
-
-                    } else {
-                        //println!("{RED}Error: Radio channel for Station {} not found in switchboard! Reinserting freight order {:?} {RESET}", freight_order.origin, freight_order);// RE-INSERT INTO LEDGER!
-                        warn!("Error: Radio channel for Station {} not found in switchboard! Reinserting freight order {:?}", freight_order.origin, freight_order);
-                        
-                        let mut ledger_access = self.ledger.lock().unwrap();
-                        freight_order.refresh_progress(now_unix_ms());
-                        // This will cause a bug; the origin's rx is missing from the switchboard, so this freight order will just keep getting reinserted and never processed. In a real system, we would want to have some error handling for this case, such as a retry mechanism or a way to alert the system administrators that there is a problem with the switchboard. For our simulation, we will just print an error message and reinsert the freight order back into the ledger, but we should be aware that this could lead to an infinite loop if the switchboard issue is not resolved. But for now, we'll be able to see the bug in action with our println!
-                        ledger_access.pending_cargo.push(freight_order);
-                    }
-
-                }
-                
-                // 3. Now check all active missions to see if any reports came back
-                let mut still_monitoring = Vec::new();
-                for (rx, order) in active_monitors {
-                    match rx.try_recv() {
-                        Ok(MissionReport::Success(details)) => {
-                            //println!("{GREEN} Producer {} success: {}", self.id, details),
-                            info!("Producer {} success: {}", self.id, details);
-                            self.ledger.lock().unwrap().missions_completed += 1;
-                        }
-                        Ok(MissionReport::PartialFailure(details)) => {
-                            //println!("{YELLOW} Producer {} partial failure: {}", self.id, details);
-                            warn!("Producer {} partial failure: {}", self.id, details);
-                            // Partial failures are non-terminal status updates (for example, derailment with full salvage).
-                            // Terminal loss cases are reported as MissionReport::Failure.
-                        }
-                        Ok(MissionReport::Failure(details)) => { 
-                            // Producer is now observer-only for failures; station-side recovery owns retries.
-                            // This prevents duplicate dispatches when stations already keep pending missions.
-                            error!("Producer {} failure: {}", self.id, details);
-                            //self.ledger.lock().unwrap().cargo_expired_in_warehouse += 1; // For simplicity, we will just count this as a cargo loss. In a real system, we might want to have more nuanced handling of different types of failures, such as distinguishing between recoverable and unrecoverable failures, or implementing a retry mechanism for certain types of failures. But for our simulation, we will just log the failure and update the ledger statistics accordingly.
-                            // // Optionally, we could reinsert the freight order back into the ledger here if we want to retry it later
-                            // let mut ledger_access = self.ledger.lock().unwrap();
-                            // order.progress_ppm = 0;
-                            // if !order.is_expired(now_unix_ms()) {
-                            //     ledger_access.pending_cargo.push(order);
-                            // }
-                            warn!("Producer {} will not requeue mission {}. Station-side recovery is authoritative.", self.id, order.id);
-                            self.ledger.lock().unwrap().missions_failed += 1;
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {
-                            // Producer is observer-only for mission lifecycle.
-                            // Cargo TTL decay at stations decides timeout/failure semantics.
-                            still_monitoring.push((rx, order));
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            error!("Producer {} error: Station {} disconnected", self.id, order.origin);
-
-                        }
-                    }
-                }
-                active_monitors = still_monitoring; // Update our active monitors with the ones that are still pending
-
-                // Check the Global Ledger again to see if there are more pending cargo items to claim. If not, we can set active to false
-                let ledger_is_empty = {
-                    let ledger_access = self.ledger.lock().unwrap();
-                    ledger_access.pending_cargo.is_empty()
-                };
-
-                if ledger_is_empty && active_monitors.is_empty() {
-                    info!("Producer {} has no more pending cargo to claim and no active missions to monitor. Clocking out.", self.id);
-                    active = false;
-                } else {
-                    //sleep to avoid burning CPU cycles while waiting for Stations to report back. In a real system, we would want a more sophisticated event-driven approach rather than just sleeping, but this is fine for our simulation.
-                    thread::sleep(std::time::Duration::from_millis(1));
-                }
-
-
-            }
-        })
-    }
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-#[derive(Debug)]
 pub struct Cargo{
     pub id: u32,
     pub item: String,
+    pub destination: u32,
     pub actual_weight: u32,
     pub contraband: Option<String>,
     pub created_time_ms: u64,
@@ -308,6 +66,14 @@ pub struct Cargo{
 
 
 impl Cargo {
+    pub fn dispatch_priority_ppm(&self, now_ms: u64) -> u64 {
+        decay_progress_ratio_ppm(self.created_time_ms, self.expiry_time_ms, now_ms)
+    }
+
+    pub fn is_expired(&self, now_ms: u64) -> bool {
+        now_ms >= self.expiry_time_ms
+    }
+
     // We use &mut self because we are going to "reach in and grab" the item
     pub fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
         
@@ -324,7 +90,6 @@ impl Cargo {
         Ok(format!("Cargo '{}' is clear and safe.", self.item))
     }
 }
-
 
 pub struct RejectedAsset {
     pub car: TrainCar,
@@ -477,14 +242,18 @@ impl Engine {
         let projected_train_weight = freight_weight as f64 + self.engine_type.weight(); // We want to consider the weight of the engine itself in our fuel calculations.
 
         let needed = self.calculate_fuel_requirement(projected_train_weight, distance);
-        
-        if needed > self.current_fuel {
-            warn!("Mission Impossible: Engine {} needs {:.1} fuel, has {:.1} fuel", self.id, needed, self.current_fuel);
-            false
-        } else {
-            info!("Mission Possible: Engine {} ready!", self.id);
-            true
-        }
+
+        let feasible = needed <= self.current_fuel;
+        debug!(
+            "Feasibility check: engine={}, freight_weight={}, distance={:.2}, needed={:.1}, fuel={:.1}, feasible={}",
+            self.id,
+            freight_weight,
+            distance,
+            needed,
+            self.current_fuel,
+            feasible
+        );
+        feasible
     }
 
     pub fn burn_fuel(&mut self, freight_weight: f64, distance: f64) -> Result<(), TrainError> {
@@ -612,29 +381,6 @@ impl Train {
 
 
 
-
-
-
-
-
-
-
-#[derive(Debug)]
-#[derive(Clone)]
-pub struct Mission {
-    pub id: u32,
-    pub request_id: u32,
-    pub attempts: u32, // We can use this to track how many times we've tried to complete this mission, which can be useful for debugging and for implementing retry logic in the future.
-    pub highpriority: bool, // This can be used to allow the stations to prioritize certain missions over others. For example, a mission with perishable goods might be marked as high priority, while a mission with non-urgent cargo might be low priority. This is just a simple boolean for now, but we could expand this to an enum or a priority level system if we want more granularity in the future.
-    pub origin: u32,
-    pub destination: u32,
-    pub cargo_ids: Vec<u32>,
-    //Sending a channel with the mission report back to the main thread so it can print the station status after the mission is processed.
-    pub reply_channel: Option<Sender<MissionReport>>,
-}
-
-
-
 #[derive(Debug)]
 pub enum MissionReport {
     Success(String),
@@ -646,9 +392,6 @@ pub enum MissionReport {
 #[derive(Debug)]
 pub enum StationCommand {
     Beat, // The Heartbeat: a regular tick that triggers the station to check its pending missions and take action. This is important for keeping the station's internal logic moving forward, such as checking for mission timeouts, re-evaluating pending missions, and generally keeping the station "alive" and responsive.
-    AssembleMission {
-        mission: Mission,
-    },
     ReceiveTrain {
         train: Train,
         reply_to: Sender<Result<(), TrainError>>,

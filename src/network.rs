@@ -1,6 +1,9 @@
-use std::collections::{HashMap, BinaryHeap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::cmp::Ordering;
-use tracing::{info, debug, warn, error};
+use std::sync::mpsc::{self, Sender};
+use std::thread;
+use std::time::Duration;
+use tracing::warn;
 
 // 1. The wrapper to hold a station and its cumulative distance in the queue
 #[derive(Clone, PartialEq)]
@@ -28,52 +31,169 @@ impl PartialOrd for RouteState {
 
 
 
-use crate::models::{FreightOrder, Location};
-//use crate::facilities::Station;
-//use std::collections::HashMap;
-//use std::sync::mpsc::{};
+use crate::models::Location;
 
-const RESET: &str = "\x1b[0m";
-const RED: &str = "\x1b[31m";
-const GREEN: &str = "\x1b[32m";
-const YELLOW: &str = "\x1b[33m";
-const CYAN: &str = "\x1b[36m";
-const BOLD: &str = "\x1b[1m";
-
-
-
-
-#[derive(Debug)]
-pub struct GlobalLedger {
-    pub pending_cargo: BinaryHeap<FreightOrder>,
-    //pub active_missions: Vec<Mission>,
-    //pub next_mission_id: u32,
-    pub missions_completed: u32,
-    pub missions_failed: u32,
+#[derive(Debug, Clone, Default)]
+pub struct TelemetrySnapshot {
+    pub cargo_registered: u32,
+    pub cargo_delivered: u32,
+    pub cargo_failed: u32,
+    pub cargo_terminal: u32, // Includes both delivered and failed cargo, as both are considered "terminal" states for a cargo item.
     pub cargo_expired_in_warehouse: u32,
     pub cargo_went_to_purgatory: u32,
     pub cargo_expired_in_purgatory: u32,
-    pub freight_orders_expired_before_pickup: u32,
     pub trains_derailed: u32,
 }
 
-impl GlobalLedger {
-    pub fn new() -> Self {
-        GlobalLedger {
-            pending_cargo: BinaryHeap::new(),
-            //active_missions: Vec::new(),
-            //next_mission_id: 1,
-            missions_completed: 0,
-            missions_failed: 0,
-            cargo_expired_in_warehouse: 0,
-            cargo_went_to_purgatory: 0,
-            cargo_expired_in_purgatory: 0,
-            freight_orders_expired_before_pickup: 0,
-            trains_derailed: 0,
+impl TelemetrySnapshot {
+    pub fn active_cargo(&self) -> u32 {
+        self.cargo_registered.saturating_sub(self.cargo_terminal)
+    }
+
+    pub fn is_drained(&self) -> bool {
+        self.cargo_registered > 0 && self.cargo_terminal >= self.cargo_registered
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum TelemetryEvent {
+    CargoRegistered { cargo_ids: Vec<u32> },
+    CargoDelivered { cargo_ids: Vec<u32> },
+    CargoExpiredInWarehouse { cargo_ids: Vec<u32> },
+    CargoExpiredInPurgatory { cargo_ids: Vec<u32> },
+    CargoSentToPurgatory { cargo_ids: Vec<u32> },
+    TrainDerailed,
+}
+
+enum TelemetryCommand {
+    Record(TelemetryEvent),
+    GetSnapshot {
+        reply_to: Sender<TelemetrySnapshot>,
+    },
+    Shutdown,
+}
+
+pub struct TelemetryLedger {
+    tx: Sender<TelemetryCommand>,
+}
+
+#[derive(Clone)]
+pub struct TelemetryClient {
+    tx: Sender<TelemetryCommand>,
+}
+
+impl TelemetryLedger {
+    pub fn start() -> Self {
+        let (tx, rx) = mpsc::channel::<TelemetryCommand>();
+
+        thread::spawn(move || {
+            let mut snapshot = TelemetrySnapshot::default();
+            let mut registered_cargo_ids = HashSet::new(); // These HashSets are like Gatekeepers. They make sure we only count each cargo ID once for each category, preventing double-counting if the same cargo ID appears in multiple events.
+            let mut delivered_cargo_ids = HashSet::new();
+            let mut failed_cargo_ids = HashSet::new();
+            let mut terminal_cargo_ids = HashSet::new();
+            let mut purgatory_cargo_ids = HashSet::new();
+
+            while let Ok(command) = rx.recv() {
+                match command {
+                    TelemetryCommand::Record(event) => match event {
+                        TelemetryEvent::CargoRegistered { cargo_ids } => {
+                            for cargo_id in cargo_ids {
+                                if registered_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_registered = snapshot.cargo_registered.saturating_add(1);
+                                }
+                            }
+                        }
+                        TelemetryEvent::CargoDelivered { cargo_ids } => {
+                            for cargo_id in cargo_ids {
+                                if delivered_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_delivered = snapshot.cargo_delivered.saturating_add(1);
+                                }
+                                if terminal_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_terminal = snapshot.cargo_terminal.saturating_add(1);
+                                }
+                            }
+                        }
+                        TelemetryEvent::CargoExpiredInWarehouse { cargo_ids } => {
+                            snapshot.cargo_expired_in_warehouse = snapshot
+                                .cargo_expired_in_warehouse
+                                .saturating_add(cargo_ids.len() as u32);
+
+                            for cargo_id in cargo_ids {
+                                if failed_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_failed = snapshot.cargo_failed.saturating_add(1);
+                                }
+                                if terminal_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_terminal = snapshot.cargo_terminal.saturating_add(1);
+                                }
+                            }
+                        }
+                        TelemetryEvent::CargoExpiredInPurgatory { cargo_ids } => {
+                            snapshot.cargo_expired_in_purgatory = snapshot
+                                .cargo_expired_in_purgatory
+                                .saturating_add(cargo_ids.len() as u32);
+
+                            for cargo_id in cargo_ids {
+                                if failed_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_failed = snapshot.cargo_failed.saturating_add(1);
+                                }
+                                if terminal_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_terminal = snapshot.cargo_terminal.saturating_add(1);
+                                }
+                            }
+                        }
+                        TelemetryEvent::CargoSentToPurgatory { cargo_ids } => {
+                            for cargo_id in cargo_ids {
+                                if purgatory_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_went_to_purgatory =
+                                        snapshot.cargo_went_to_purgatory.saturating_add(1);
+                                }
+                            }
+                        }
+                        TelemetryEvent::TrainDerailed => {
+                            snapshot.trains_derailed = snapshot.trains_derailed.saturating_add(1);
+                        }
+                    },
+                    TelemetryCommand::GetSnapshot { reply_to } => {
+                        let _ = reply_to.send(snapshot.clone());
+                    }
+                    TelemetryCommand::Shutdown => break,
+                }
+            }
+        });
+
+        Self { tx }
+    }
+
+    pub fn client(&self) -> TelemetryClient {
+        TelemetryClient {
+            tx: self.tx.clone(),
         }
     }
 
-    
+    pub fn snapshot(&self) -> Option<TelemetrySnapshot> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        if self
+            .tx
+            .send(TelemetryCommand::GetSnapshot { reply_to: reply_tx })
+            .is_err()
+        {
+            return None;
+        }
+
+        reply_rx.recv_timeout(Duration::from_millis(250)).ok()
+    }
+
+    pub fn shutdown(&self) {
+        let _ = self.tx.send(TelemetryCommand::Shutdown);
+    }
+
+}
+
+impl TelemetryClient {
+    pub fn record(&self, event: TelemetryEvent) {
+        let _ = self.tx.send(TelemetryCommand::Record(event));
+    }
 }
 
 
