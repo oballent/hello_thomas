@@ -1,6 +1,6 @@
 use crate::models::{
-    now_unix_ms, Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset, StationCommand,
-    Train, TrainCar, TrainError,
+    now_unix_ms, Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset,
+    StationCommand, Train, TrainCar, TrainError, STATION_HEARTBEAT_MS,
 };
 use crate::network::{RailwayNetwork, TelemetryClient, TelemetryEvent};
 use rand::Rng;
@@ -20,7 +20,7 @@ const CYAN: &str = "\x1b[36m";
 const BOLD: &str = "\x1b[1m";
 
 const EMPTY_CAR_WEIGHT: u32 = 2000;
-const ENGINE_REQUEST_RETRY_COOLDOWN_MS: u64 = 2_000;
+const ENGINE_REQUEST_MAILBOX_POLL_MS: u64 = 50;
 
 static GLOBAL_CAR_ID: AtomicU32 = AtomicU32::new(0);
 static GLOBAL_REQUEST_ID: AtomicU32 = AtomicU32::new(0);
@@ -442,7 +442,7 @@ impl Station {
                     }
                 }
 
-                if last_heartbeat.elapsed() >= Duration::from_millis(500) {
+                if last_heartbeat.elapsed() >= Duration::from_millis(STATION_HEARTBEAT_MS) {
                     state.handle_heartbeat();
                     last_heartbeat = Instant::now();
                 }
@@ -461,7 +461,7 @@ pub struct StationState {
     pub map: Arc<RailwayNetwork>,
     pub telemetry: TelemetryClient,
     pub seen_engine_request: HashSet<u32>,
-    pub pending_engine_requests: HashMap<u32, Instant>,
+    pub pending_engine_requests: HashMap<u32, EngineRequestState>,
     pub tx: Sender<StationCommand>,
 }
 
@@ -474,6 +474,16 @@ impl CanReport for StationState {
 struct ProcessCarsOutcome {
     failed_car_ids: Vec<u32>,
     failed_cargo_ids: Vec<u32>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum EngineRequestState {
+    Searching { request_id: u32, retry_after: Instant },
+    Promised {
+        request_id: u32,
+        responder_id: u32,
+        engine_id: u32,
+    },
 }
 
 impl StationState {
@@ -550,6 +560,7 @@ impl StationState {
                 ttl,
                 branch_notified,
                 notified_count,
+                reply_to,
             } => {
                 self.handle_engine_request(
                     requester_id,
@@ -562,16 +573,26 @@ impl StationState {
                     ttl,
                     branch_notified,
                     notified_count,
+                    reply_to,
                 );
                 true
             }
-            StationCommand::EngineRequestResponse {
-                request_id: _,
-                station_id: _,
-                engine,
+            StationCommand::EngineRequestConfirmed {
+                request_id,
+                mission_id,
+                responder_id,
+                engine_id,
             } => {
-                self.roundhouse.house(engine);
-                self.try_dispatch_from_warehouse();
+                self.handle_engine_request_confirmed(request_id, mission_id, responder_id, engine_id);
+                true
+            }
+            StationCommand::EngineTransferFailed {
+                request_id,
+                mission_id,
+                responder_id,
+                reason,
+            } => {
+                self.handle_engine_transfer_failed(request_id, mission_id, responder_id, reason);
                 true
             }
             StationCommand::CheckStatus => {
@@ -616,6 +637,86 @@ impl StationState {
         cargo.in_transit_since_ms = None;
         self.warehouse.store(cargo);
         self.warehouse.rebuild_pending_work();
+    }
+
+    fn handle_engine_request_confirmed(
+        &mut self,
+        request_id: u32,
+        mission_id: Option<u32>,
+        responder_id: u32,
+        engine_id: u32,
+    ) {
+        let Some(cargo_id) = mission_id else {
+            return;
+        };
+
+        match self.pending_engine_requests.get(&cargo_id).copied() {
+            Some(EngineRequestState::Searching {
+                request_id: active_request_id,
+                ..
+            }) if active_request_id == request_id => {
+                info!(
+                    "[{}] Request {} for Cargo {} promised by Station {} (Engine {})",
+                    self.name, request_id, cargo_id, responder_id, engine_id
+                );
+                self.pending_engine_requests.insert(
+                    cargo_id,
+                    EngineRequestState::Promised {
+                        request_id,
+                        responder_id,
+                        engine_id,
+                    },
+                );
+            }
+            Some(_) => {
+                debug!(
+                    "[{}] Ignoring stale EngineRequestConfirmed for Cargo {} (request_id={})",
+                    self.name, cargo_id, request_id
+                );
+            }
+            None => {
+                debug!(
+                    "[{}] Ignoring EngineRequestConfirmed for Cargo {} with no pending request",
+                    self.name, cargo_id
+                );
+            }
+        }
+    }
+
+    fn handle_engine_transfer_failed(
+        &mut self,
+        request_id: u32,
+        mission_id: Option<u32>,
+        responder_id: u32,
+        reason: String,
+    ) {
+        let Some(cargo_id) = mission_id else {
+            return;
+        };
+
+        let matches_pending = self
+            .pending_engine_requests
+            .get(&cargo_id)
+            .map(|state| match state {
+                EngineRequestState::Searching {
+                    request_id: active_request_id,
+                    ..
+                } => *active_request_id == request_id,
+                EngineRequestState::Promised {
+                    request_id: active_request_id,
+                    ..
+                } => *active_request_id == request_id,
+            })
+            .unwrap_or(false);
+
+        if matches_pending {
+            warn!(
+                "[{}] Engine transfer failed for Cargo {} on request {} from Station {}: {}",
+                self.name, cargo_id, request_id, responder_id, reason
+            );
+            self.pending_engine_requests.remove(&cargo_id);
+            self.try_dispatch_from_warehouse();
+        }
     }
 
     fn try_dispatch_from_warehouse(&mut self) {
@@ -682,14 +783,38 @@ impl StationState {
             Some(engine_id) => self
                 .roundhouse
                 .select_engine_by_id(engine_id)
-                .expect("engine id must exist"),
+                .expect("engine id must exist"), // Safe because we just found this ID in the roundhouse
             None => {
                 let now = Instant::now();
-                let next_retry_at = self.pending_engine_requests.get(&mission_id).copied();
-                let can_retry = next_retry_at.map(|at| now >= at).unwrap_or(true);
+                let should_request = match self.pending_engine_requests.get(&mission_id).copied() {
+                    Some(EngineRequestState::Promised {
+                        request_id,
+                        responder_id,
+                        engine_id,
+                    }) => {
+                        debug!(
+                            "[{}] Cargo {} already has promised engine {} from Station {} (request_id={})",
+                            self.name, mission_id, engine_id, responder_id, request_id
+                        );
+                        false
+                    }
+                    Some(EngineRequestState::Searching { retry_after, .. }) if now < retry_after => {
+                        debug!(
+                            "[{}] Engine request for Cargo {} still searching; retry in {} ms",
+                            self.name,
+                            mission_id,
+                            retry_after.saturating_duration_since(now).as_millis()
+                        );
+                        false
+                    }
+                    _ => true,
+                };
 
-                if can_retry {
+                if should_request {
                     let request_id = self.yard.generate_new_request_id();
+                    let request_ttl: u32 = 8;
+                    let search_timeout_ms =
+                        STATION_HEARTBEAT_MS + (request_ttl as u64 * ENGINE_REQUEST_MAILBOX_POLL_MS);
                     warn!(
                         "[{}] No local engine for Cargo {}; requesting aid (request_id={})",
                         self.name, mission_id, request_id
@@ -700,18 +825,14 @@ impl StationState {
                         Some(mission_id),
                         true_total_weight,
                         max_hop_distance,
-                        8,
+                        request_ttl,
                     );
                     self.pending_engine_requests.insert(
                         mission_id,
-                        now + Duration::from_millis(ENGINE_REQUEST_RETRY_COOLDOWN_MS),
-                    );
-                } else if let Some(next_at) = next_retry_at {
-                    debug!(
-                        "[{}] Engine request for Cargo {} cooling down for {} ms",
-                        self.name,
-                        mission_id,
-                        next_at.saturating_duration_since(now).as_millis()
+                        EngineRequestState::Searching {
+                            request_id,
+                            retry_after: now + Duration::from_millis(search_timeout_ms),
+                        },
                     );
                 }
 
@@ -742,6 +863,7 @@ impl StationState {
             request_id: None,
             destination,
             report_to: None,
+            engine_request_reply_to: None,
         };
 
         self.pending_engine_requests.remove(&mission_id);
@@ -753,6 +875,9 @@ impl StationState {
         train.engine.refuel();
 
         if train.request_id.is_some() {
+            if let Some(mission_id) = train.mission_id {
+                self.pending_engine_requests.remove(&mission_id);
+            }
             if !train.cars.is_empty() {
                 let _ = self.process_cars(train.cars, train.mission_id, false);
             }
@@ -935,6 +1060,7 @@ impl StationState {
         ttl: u32,
         branch_notified: [u32; 64],
         notified_count: usize,
+        reply_to: Sender<StationCommand>,
     ) {
         if ttl == 0 {
             return;
@@ -978,6 +1104,12 @@ impl StationState {
                 .find_can_fulfill_request(max_hop_to_requester, min_capacity, mission_max_hop)
             {
                 if let Some(engine) = self.roundhouse.select_engine_by_id(engine_id) {
+                    let _ = reply_to.send(StationCommand::EngineRequestConfirmed {
+                        request_id,
+                        mission_id,
+                        responder_id: self.id,
+                        engine_id: engine.id,
+                    });
                     info!(
                         "[{}] Engine {} answering request {} for requester {}",
                         self.name, engine.id, request_id, requester_id
@@ -990,6 +1122,7 @@ impl StationState {
                         request_id: Some(request_id),
                         destination: requester_id,
                         report_to: None,
+                        engine_request_reply_to: Some(reply_to.clone()),
                     };
                     self.dispatch_train(transfer, route_to_requester, self.telemetry.clone());
                 }
@@ -1017,6 +1150,7 @@ impl StationState {
             remaining_ttl,
             branch_notified,
             notified_count,
+            reply_to,
         );
 
 
@@ -1053,6 +1187,7 @@ impl StationState {
             ttl,
             branch_notified,
             1,
+            self.tx.clone(),
         );
     }
 
@@ -1067,6 +1202,7 @@ impl StationState {
         ttl: u32,
         branch_notified: [u32; 64],
         notified_count: usize,
+        reply_to: Sender<StationCommand>,
     ) {
         if ttl == 0 {
             return;
@@ -1135,6 +1271,7 @@ impl StationState {
                     ttl: assigned_ttl,
                     branch_notified: stamped,
                     notified_count: stamped_count,
+                    reply_to: reply_to.clone(),
                 });
             }
         }
@@ -1246,6 +1383,17 @@ impl StationState {
                         "DERAILMENT: transfer train {} for request {}",
                         train_id, request_id
                     );
+                    if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
+                        let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                            request_id,
+                            mission_id: train.mission_id,
+                            responder_id: station_id_clone,
+                            reason: format!(
+                                "Emergency engine transfer train {} derailed",
+                                train_id
+                            ),
+                        });
+                    }
                     return;
                 }
 

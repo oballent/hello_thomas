@@ -326,7 +326,8 @@ pub struct Train{
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
     pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
-    pub report_to: Option<Sender<MissionReport>>
+    pub report_to: Option<Sender<MissionReport>>,
+    pub engine_request_reply_to: Option<Sender<StationCommand>>,
 }
 
 impl Train {
@@ -435,11 +436,19 @@ pub enum StationCommand {
         // This lives entirely on the stack. Zero heap allocation!
         branch_notified: [u32; 64], // A list of ancestor stations and their neighbors that have already been notified about this request. This prevents us from wasting TTL on sending the same request to the same station multiple times.
         notified_count: usize,
+        reply_to: Sender<StationCommand>,
     },
-    EngineRequestResponse {
-        request_id: u32, // This should match the request_id from the EngineRequest command so the requester can correlate responses to their original request.
-        station_id: u32, // The ID of the station that is offering the engine. This allows the requester to know where the engine is coming from and potentially request it from that station if they want to.
-        engine: Engine,
+    EngineRequestConfirmed {
+        request_id: u32,
+        mission_id: Option<u32>,
+        responder_id: u32,
+        engine_id: u32,
+    },
+    EngineTransferFailed {
+        request_id: u32,
+        mission_id: Option<u32>,
+        responder_id: u32,
+        reason: String,
     },
     
     CheckStatus, // The Alarm Clock: station sends to itself every X seconds to trigger a check of the pending missions list, which is stored locally at each station. 
