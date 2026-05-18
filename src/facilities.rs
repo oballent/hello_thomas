@@ -694,28 +694,50 @@ impl StationState {
             return;
         };
 
-        let matches_pending = self
-            .pending_engine_requests
-            .get(&cargo_id)
-            .map(|state| match state {
-                EngineRequestState::Searching {
-                    request_id: active_request_id,
-                    ..
-                } => *active_request_id == request_id,
-                EngineRequestState::Promised {
-                    request_id: active_request_id,
-                    ..
-                } => *active_request_id == request_id,
-            })
-            .unwrap_or(false);
-
-        if matches_pending {
-            warn!(
-                "[{}] Engine transfer failed for Cargo {} on request {} from Station {}: {}",
-                self.name, cargo_id, request_id, responder_id, reason
-            );
-            self.pending_engine_requests.remove(&cargo_id);
-            self.try_dispatch_from_warehouse();
+        match self.pending_engine_requests.get(&cargo_id).copied() {
+            Some(EngineRequestState::Promised {
+                request_id: active_request_id,
+                responder_id: promised_responder_id,
+                ..
+            }) if active_request_id == request_id && promised_responder_id == responder_id => {
+                warn!(
+                    "[{}] Engine transfer failed for Cargo {} on request {} from Station {}: {}",
+                    self.name, cargo_id, request_id, responder_id, reason
+                );
+                self.pending_engine_requests.remove(&cargo_id);
+                self.try_dispatch_from_warehouse();
+            }
+            Some(EngineRequestState::Promised {
+                request_id: active_request_id,
+                responder_id: promised_responder_id,
+                ..
+            }) if active_request_id == request_id => {
+                debug!(
+                    "[{}] Ignoring transfer failure for Cargo {} on request {} from non-promised responder {} (promised responder is {})",
+                    self.name, cargo_id, request_id, responder_id, promised_responder_id
+                );
+            }
+            Some(EngineRequestState::Searching {
+                request_id: active_request_id,
+                ..
+            }) if active_request_id == request_id => {
+                warn!(
+                    "[{}] ***THIS SHOULDN'T HAPPEN***: Ignoring transfer failure for Cargo {} on request {} while request is still Searching",
+                    self.name, cargo_id, request_id
+                );
+            }
+            Some(_) => {
+                debug!(
+                    "[{}] Ignoring stale transfer failure for Cargo {} (request_id={}, responder_id={})",
+                    self.name, cargo_id, request_id, responder_id
+                );
+            }
+            None => {
+                debug!(
+                    "[{}] Ignoring transfer failure for Cargo {} with no pending engine request",
+                    self.name, cargo_id
+                );
+            }
         }
     }
 
