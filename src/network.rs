@@ -42,7 +42,11 @@ pub struct TelemetrySnapshot {
     pub cargo_expired_in_warehouse: u32,
     pub cargo_went_to_purgatory: u32,
     pub cargo_expired_in_purgatory: u32,
+    pub cargo_expired_in_transit: u32,
     pub trains_derailed: u32,
+    pub trains_dispatch_failed: u32,
+    pub trains_forward_failed: u32,
+    pub trains_emergency_sos_failed: u32,
 }
 
 impl TelemetrySnapshot {
@@ -61,8 +65,12 @@ pub enum TelemetryEvent {
     CargoDelivered { cargo_ids: Vec<u32> },
     CargoExpiredInWarehouse { cargo_ids: Vec<u32> },
     CargoExpiredInPurgatory { cargo_ids: Vec<u32> },
+    CargoExpiredInTransit { cargo_ids: Vec<u32> },
     CargoSentToPurgatory { cargo_ids: Vec<u32> },
     TrainDerailed,
+    TrainForwardFailed { reason: String },
+    TrainDispatchFailed { reason: String },
+    EmergencySOSFailed { reason: String },
 }
 
 enum TelemetryCommand {
@@ -142,6 +150,20 @@ impl TelemetryLedger {
                                 }
                             }
                         }
+                        TelemetryEvent::CargoExpiredInTransit { cargo_ids } => {
+                            snapshot.cargo_expired_in_transit = snapshot
+                                .cargo_expired_in_transit
+                                .saturating_add(cargo_ids.len() as u32);
+
+                            for cargo_id in cargo_ids {
+                                if failed_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_failed = snapshot.cargo_failed.saturating_add(1);
+                                }
+                                if terminal_cargo_ids.insert(cargo_id) {
+                                    snapshot.cargo_terminal = snapshot.cargo_terminal.saturating_add(1);
+                                }
+                            }
+                        }
                         TelemetryEvent::CargoSentToPurgatory { cargo_ids } => {
                             for cargo_id in cargo_ids {
                                 if purgatory_cargo_ids.insert(cargo_id) {
@@ -152,6 +174,15 @@ impl TelemetryLedger {
                         }
                         TelemetryEvent::TrainDerailed => {
                             snapshot.trains_derailed = snapshot.trains_derailed.saturating_add(1);
+                        }
+                        TelemetryEvent::TrainDispatchFailed { reason: _ } => {
+                            snapshot.trains_dispatch_failed = snapshot.trains_dispatch_failed.saturating_add(1);
+                        }
+                        TelemetryEvent::TrainForwardFailed { reason: _ } => {
+                            snapshot.trains_forward_failed = snapshot.trains_forward_failed.saturating_add(1);
+                        }
+                        TelemetryEvent::EmergencySOSFailed { reason: _ } => {
+                            snapshot.trains_emergency_sos_failed = snapshot.trains_emergency_sos_failed.saturating_add(1);
                         }
                     },
                     TelemetryCommand::GetSnapshot { reply_to } => {

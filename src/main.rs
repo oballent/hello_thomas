@@ -3,13 +3,13 @@ mod facilities;
 mod network;
 
 use crate::facilities::Station;
-use crate::models::{now_unix_ms, Cargo, Engine, EngineType, Location, StationCommand, STATION_HEARTBEAT_MS};
+use crate::models::{Cargo, Engine, EngineType, Location, StationCommand, STATION_HEARTBEAT_MS};
 use crate::network::{RailwayNetwork, TelemetryLedger};
 
 use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -98,6 +98,17 @@ fn main() {
     let shared_network = Arc::new(network);
     let telemetry = TelemetryLedger::start();
     let telemetry_client = telemetry.client();
+    let sim_tick = Arc::new(AtomicU64::new(0));
+    let sim_clock_running = Arc::new(AtomicBool::new(true));
+
+    let sim_tick_clock = Arc::clone(&sim_tick);
+    let sim_clock_running_thread = Arc::clone(&sim_clock_running);
+    let sim_clock = thread::spawn(move || {
+        while sim_clock_running_thread.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(STATION_HEARTBEAT_MS));
+            sim_tick_clock.fetch_add(1, Ordering::SeqCst);
+        }
+    });
 
     let build_neighbors = |
         station_id: u32,
@@ -134,6 +145,7 @@ fn main() {
             tx,
             Arc::clone(&shared_network),
             telemetry_client.clone(),
+            Arc::clone(&sim_tick),
             rx,
         );
     }
@@ -199,10 +211,9 @@ fn main() {
             }
 
             let cargo_id = cargo_counter.fetch_add(1, Ordering::SeqCst);
-            let created_time_ms = now_unix_ms();
+            let created_time_ms = sim_tick.load(Ordering::SeqCst);
             let ttl_ticks = rng.gen_range(10..=22);
-            let expiry_time_ms = created_time_ms
-                .saturating_add((ttl_ticks as u64).saturating_mul(STATION_HEARTBEAT_MS));
+            let expiry_time_ms = created_time_ms.saturating_add(ttl_ticks as u64);
 
             seed_cargo.push(Cargo {
                 id: cargo_id,
@@ -236,6 +247,7 @@ fn main() {
     let switchboard_gen = switchboard.clone();
     let station_ids_gen = station_ids.clone();
     let cargo_counter_gen = Arc::clone(&cargo_counter);
+    let sim_tick_gen = Arc::clone(&sim_tick);
 
     let generator = thread::spawn(move || {
         let mut rng = rand::thread_rng();
@@ -259,10 +271,9 @@ fn main() {
             }
 
             let cargo_id = cargo_counter_gen.fetch_add(1, Ordering::SeqCst);
-            let created_time_ms = now_unix_ms();
+            let created_time_ms = sim_tick_gen.load(Ordering::SeqCst);
             let ttl_ticks = rng.gen_range(8..=18);
-            let expiry_time_ms = created_time_ms
-                .saturating_add((ttl_ticks as u64).saturating_mul(STATION_HEARTBEAT_MS));
+            let expiry_time_ms = created_time_ms.saturating_add(ttl_ticks as u64);
 
             let cargo = Cargo {
                 id: cargo_id,
@@ -337,6 +348,9 @@ fn main() {
     }
 
     thread::sleep(Duration::from_millis(300));
+
+    sim_clock_running.store(false, Ordering::SeqCst);
+    let _ = sim_clock.join();
 
     info!("TelemetryLedger Status: {:#?}", telemetry.snapshot());
     telemetry.shutdown();

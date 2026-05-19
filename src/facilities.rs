@@ -1,11 +1,11 @@
 use crate::models::{
-    now_unix_ms, Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset,
-    StationCommand, Train, TrainCar, TrainError, STATION_HEARTBEAT_MS,
+    Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset, StationCommand, Train,
+    TrainCar, TrainError, STATION_HEARTBEAT_MS,
 };
 use crate::network::{RailwayNetwork, TelemetryClient, TelemetryEvent};
 use rand::Rng;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
@@ -121,7 +121,7 @@ impl Railyard {
         required <= self.cars.values().filter(|car| car.cargo.is_none()).count()
     }
 
-    pub fn load_cargo_into_empty_car(&mut self, cargo: Cargo) -> Result<TrainCar, TrainError> {
+    pub fn load_cargo_into_empty_car(&mut self, cargo: Cargo) -> Result<TrainCar, (Cargo, TrainError)> {
         let empty_car_id = self
             .cars
             .iter()
@@ -133,18 +133,39 @@ impl Railyard {
             car.cargo = Some(cargo);
             Ok(car)
         } else {
-            Err(TrainError::MissionImpossible {
-                reason: "No empty cars available in yard".to_string(),
-            })
+            Err((
+                cargo,
+                TrainError::MissionImpossible {
+                    reason: "No empty cars available in yard".to_string(),
+                },
+            ))
         }
     }
 
-    pub fn assemble_cars(&mut self, cargo: Vec<Cargo>) -> Result<Vec<TrainCar>, TrainError> {
+    pub fn assemble_cars(&mut self, cargo: Vec<Cargo>) -> Result<Vec<TrainCar>, (Vec<Cargo>, TrainError)> {
         let mut cars = Vec::with_capacity(cargo.len());
-        for item in cargo {
-            cars.push(self.load_cargo_into_empty_car(item)?);
+        let mut remaining = cargo;
+
+        while let Some(item) = remaining.pop() { // We pop from the end of the list to preserve ownership without cloning, since we won't need the original list if we successfully load everything.
+            match self.load_cargo_into_empty_car(item) {
+                Ok(car) => cars.push(car), // Successfully loaded this cargo, move on to the next one.
+                Err((returned_cargo, err)) => {
+                    // Roll back already loaded cars to preserve ownership without cloning.
+                    for mut car in cars.drain(..) {
+                        if let Some(loaded_cargo) = car.cargo.take() {
+                            remaining.push(loaded_cargo); // Put the cargo back into the remaining list for retrying, since we won't be able to load it onto a train without its car.
+                        }
+                        self.cars.insert(car.id, car); // Put the empty car back into the yard's inventory
+                    }
+
+                    remaining.push(returned_cargo); // Put the cargo that failed to load back into the remaining list for retrying.
+                    return Err((remaining, err)); // Return the list of cargo that couldn't be loaded, along with the error from the first failure.
+                }
+            }
         }
-        Ok(cars)
+
+        cars.reverse(); // This is unnecessary but it makes the order of cars more intuitive (first cargo in the list ends up as the first car).
+        Ok(cars) // All cargo successfully loaded into cars, return the list of loaded cars.
     }
 
     pub fn receive_car(&mut self, mut car: TrainCar) -> Result<Option<Cargo>, (TrainCar, Vec<TrainError>)> {
@@ -171,14 +192,13 @@ impl Railyard {
         }
     }
 
-    pub fn purge_expired_cargo_from_purgatory(&mut self) -> Vec<Cargo> {
-        let now_ms = now_unix_ms();
+    pub fn purge_expired_cargo_from_purgatory(&mut self, now_tick: u64) -> Vec<Cargo> {
         let mut expired = Vec::new();
         let mut retained = Vec::new();
 
         for mut asset in self.purgatory.drain(..) {
             if let Some(cargo) = asset.car.cargo.take() {
-                if cargo.expiry_time_ms <= now_ms {
+                if cargo.expiry_time_ms <= now_tick {
                     expired.push(cargo);
                 } else {
                     asset.car.cargo = Some(cargo);
@@ -272,10 +292,10 @@ pub struct CargoQueueItem {
 }
 
 impl CargoQueueItem {
-    fn from_cargo(cargo: &Cargo, now_ms: u64) -> Self {
+    fn from_cargo(cargo: &Cargo, now_tick: u64) -> Self {
         Self {
             cargo_id: cargo.id,
-            progress_ppm: cargo.dispatch_priority_ppm(now_ms),
+            progress_ppm: cargo.dispatch_priority_ppm(now_tick),
             expiry_time_ms: cargo.expiry_time_ms,
         }
     }
@@ -311,78 +331,74 @@ impl Warehouse {
         }
     }
 
-    pub fn store(&mut self, mut cargo: Cargo) {
+    pub fn store(&mut self, mut cargo: Cargo, now_tick: u64) {
         if let Some(in_transit_since_ms) = cargo.in_transit_since_ms.take() {
-            let transit_duration_ms = now_unix_ms().saturating_sub(in_transit_since_ms);
+            let transit_duration_ms = now_tick.saturating_sub(in_transit_since_ms);
             cargo.expiry_time_ms = cargo.expiry_time_ms.saturating_add(transit_duration_ms);
         }
 
-        let now_ms = now_unix_ms();
-        let queue_item = CargoQueueItem::from_cargo(&cargo, now_ms);
+        let queue_item = CargoQueueItem::from_cargo(&cargo, now_tick);
         self.inventory.insert(cargo.id, cargo);
         self.pending_work.push(queue_item);
     }
 
-    pub fn rebuild_pending_work(&mut self) {
-        let now_ms = now_unix_ms();
+    pub fn rebuild_pending_work(&mut self, now_tick: u64) {
         let mut rebuilt = BinaryHeap::new();
 
         for cargo in self.inventory.values() {
-            if !cargo.is_expired(now_ms) {
-                rebuilt.push(CargoQueueItem::from_cargo(cargo, now_ms));
+            if !cargo.is_expired(now_tick) {
+                rebuilt.push(CargoQueueItem::from_cargo(cargo, now_tick));
             }
         }
 
         self.pending_work = rebuilt;
     }
 
-    pub fn drop_expired_cargo(&mut self) -> Vec<u32> {
-        let now_ms = now_unix_ms();
+    pub fn drop_expired_cargo(&mut self, now_tick: u64) -> Vec<u32> {
         let mut expired = Vec::new();
 
         self.inventory.retain(|id, cargo| {
-            let keep = !cargo.is_expired(now_ms);
+            let keep = !cargo.is_expired(now_tick);
             if !keep {
                 expired.push(*id);
             }
             keep
         });
 
-        self.rebuild_pending_work();
+        self.rebuild_pending_work(now_tick);
         expired
     }
 
-    pub fn pop_next_cargo_for_dispatch(&mut self) -> Option<Cargo> {
-        let now_ms = now_unix_ms();
+    pub fn pop_next_cargo_for_dispatch(&mut self, now_tick: u64) -> Option<Cargo> {
 
         while let Some(candidate) = self.pending_work.pop() {
             let Some(current) = self.inventory.get(&candidate.cargo_id) else {
                 continue;
             };
 
-            if current.is_expired(now_ms) {
+            if current.is_expired(now_tick) {
                 self.inventory.remove(&candidate.cargo_id);
                 continue;
             }
 
-            let live_progress = current.dispatch_priority_ppm(now_ms);
+            let live_progress = current.dispatch_priority_ppm(now_tick);
             if live_progress != candidate.progress_ppm || current.expiry_time_ms != candidate.expiry_time_ms {
-                self.pending_work.push(CargoQueueItem::from_cargo(current, now_ms));
+                self.pending_work.push(CargoQueueItem::from_cargo(current, now_tick));
                 continue;
             }
 
             let mut cargo = self.inventory.remove(&candidate.cargo_id)?;
-            cargo.in_transit_since_ms = Some(now_ms);
+            cargo.in_transit_since_ms = Some(now_tick);
             return Some(cargo);
         }
 
         None
     }
 
-    pub fn get_cargo_by_id(&mut self, id: u32) -> Result<Cargo, TrainError> {
+    pub fn get_cargo_by_id(&mut self, id: u32, now_tick: u64) -> Result<Cargo, TrainError> {
         match self.inventory.remove(&id) {
             Some(mut cargo) => {
-                cargo.in_transit_since_ms = Some(now_unix_ms());
+                cargo.in_transit_since_ms = Some(now_tick);
                 Ok(cargo)
             }
             None => Err(TrainError::MissingCargo { cargo_id: vec![id] }),
@@ -406,12 +422,21 @@ impl Station {
         tx: Sender<StationCommand>,
         map: Arc<RailwayNetwork>,
         telemetry: TelemetryClient,
+        sim_tick: Arc<AtomicU64>,
         rx: Receiver<StationCommand>,
     ) {
         let station_name = String::from(name);
         let station_id = id;
 
-        let mut state = StationState::new(id, station_name.clone(), neighbors, map, telemetry, tx);
+        let mut state = StationState::new(
+            id,
+            station_name.clone(),
+            neighbors,
+            map,
+            telemetry,
+            tx,
+            sim_tick,
+        );
 
         thread::spawn(move || {
             println!(
@@ -460,6 +485,7 @@ pub struct StationState {
     pub neighbors: HashMap<u32, Sender<StationCommand>>,
     pub map: Arc<RailwayNetwork>,
     pub telemetry: TelemetryClient,
+    pub sim_tick: Arc<AtomicU64>,
     pub seen_engine_request: HashSet<u32>,
     pub pending_engine_requests: HashMap<u32, EngineRequestState>,
     pub tx: Sender<StationCommand>,
@@ -494,6 +520,7 @@ impl StationState {
         map: Arc<RailwayNetwork>,
         telemetry: TelemetryClient,
         tx: Sender<StationCommand>,
+        sim_tick: Arc<AtomicU64>,
     ) -> Self {
         Self {
             id,
@@ -504,10 +531,15 @@ impl StationState {
             neighbors,
             map,
             telemetry,
+            sim_tick,
             seen_engine_request: HashSet::new(),
             pending_engine_requests: HashMap::new(),
             tx,
         }
+    }
+
+    fn now_tick(&self) -> u64 {
+        self.sim_tick.load(Ordering::SeqCst)
     }
 
     fn handle_command(&mut self, command: StationCommand) -> bool {
@@ -543,10 +575,6 @@ impl StationState {
             }
             StationCommand::NewNeighbor { neighbor, neighbor_tx } => {
                 self.handle_new_neighbor(neighbor, neighbor_tx);
-                true
-            }
-            StationCommand::RequestEmptyCars { count } => {
-                self.handle_request_empty_cars(count);
                 true
             }
             StationCommand::EngineRequest {
@@ -609,8 +637,9 @@ impl StationState {
 
     pub fn handle_heartbeat(&mut self) {
         debug!("[{}]::Station {} heartbeat", self.name, self.id);
+        let now_tick = self.now_tick();
 
-        let dropped_cargo = self.warehouse.drop_expired_cargo();
+        let dropped_cargo = self.warehouse.drop_expired_cargo(now_tick);
         if !dropped_cargo.is_empty() {
             for cargo_id in &dropped_cargo {
                 self.pending_engine_requests.remove(cargo_id);
@@ -619,7 +648,7 @@ impl StationState {
                 .record(TelemetryEvent::CargoExpiredInWarehouse { cargo_ids: dropped_cargo });
         }
 
-        let dropped_from_purgatory = self.yard.purge_expired_cargo_from_purgatory();
+        let dropped_from_purgatory = self.yard.purge_expired_cargo_from_purgatory(now_tick);
         if !dropped_from_purgatory.is_empty() {
             let cargo_ids: Vec<u32> = dropped_from_purgatory.into_iter().map(|c| c.id).collect();
             for cargo_id in &cargo_ids {
@@ -629,14 +658,15 @@ impl StationState {
                 .record(TelemetryEvent::CargoExpiredInPurgatory { cargo_ids });
         }
 
-        self.warehouse.rebuild_pending_work();
+        self.warehouse.rebuild_pending_work(now_tick);
         self.try_dispatch_from_warehouse();
     }
 
     fn park_cargo_for_retry(&mut self, mut cargo: Cargo) {
         cargo.in_transit_since_ms = None;
-        self.warehouse.store(cargo);
-        self.warehouse.rebuild_pending_work();
+        let now_tick = self.now_tick();
+        self.warehouse.store(cargo, now_tick);
+        self.warehouse.rebuild_pending_work(now_tick);
     }
 
     fn handle_engine_request_confirmed(
@@ -711,7 +741,7 @@ impl StationState {
                 request_id: active_request_id,
                 responder_id: promised_responder_id,
                 ..
-            }) if active_request_id == request_id => {
+            }) if active_request_id == request_id => { // Because we've made it this far, we know the responder_id doesn't match the promised one
                 debug!(
                     "[{}] Ignoring transfer failure for Cargo {} on request {} from non-promised responder {} (promised responder is {})",
                     self.name, cargo_id, request_id, responder_id, promised_responder_id
@@ -742,9 +772,10 @@ impl StationState {
     }
 
     fn try_dispatch_from_warehouse(&mut self) {
-        self.warehouse.rebuild_pending_work();
+        let now_tick = self.now_tick();
+        self.warehouse.rebuild_pending_work(now_tick);
 
-        while let Some(cargo) = self.warehouse.pop_next_cargo_for_dispatch() {
+        while let Some(cargo) = self.warehouse.pop_next_cargo_for_dispatch(now_tick) {
             if !self.dispatch_cargo(cargo) {
                 break;
             }
@@ -781,10 +812,17 @@ impl StationState {
 
         let true_total_weight = cargo.actual_weight + EMPTY_CAR_WEIGHT;
 
-        if !self.yard.validate_empty_car_count(1) {
-            let _ = self.tx.send(StationCommand::RequestEmptyCars { count: 1 });
-            self.park_cargo_for_retry(cargo);
-            return false;
+        let required_cars = 1usize;
+        if !self.yard.validate_empty_car_count(required_cars) {
+            self.allocate_empty_cars(required_cars as u32);
+            if !self.yard.validate_empty_car_count(required_cars) {
+                warn!(
+                    "[{}] Unable to allocate required empty cars ({}) for Cargo {}",
+                    self.name, required_cars, mission_id
+                );
+                self.park_cargo_for_retry(cargo);
+                return false;
+            }
         }
 
         let mut max_hop_distance = 0.0;
@@ -863,16 +901,17 @@ impl StationState {
             }
         };
 
-        let cargo_backup = cargo.clone();
         let attached_cars = match self.yard.assemble_cars(vec![cargo]) {
             Ok(cars) => cars,
-            Err(e) => {
+            Err((returned_cargo, e)) => {
                 error!(
                     "[{}] Failed to assemble car for Cargo {}: {:?}",
                     self.name, mission_id, e
                 );
                 self.roundhouse.house(engine);
-                self.park_cargo_for_retry(cargo_backup);
+                for item in returned_cargo {
+                    self.park_cargo_for_retry(item);
+                }
                 return false;
             }
         };
@@ -978,17 +1017,19 @@ impl StationState {
 
         self.send_partial_failure_report(mission_id, &reason, &outcome.failed_cargo_ids, report_to);
 
-        self.warehouse.rebuild_pending_work();
+        let now_tick = self.now_tick();
+        self.warehouse.rebuild_pending_work(now_tick);
         self.try_dispatch_from_warehouse();
     }
 
     fn handle_intake_cars(&mut self, cars: Vec<TrainCar>, reply_to: Option<Sender<Result<(), TrainError>>>) {
         let mut intake_issues = Vec::new();
         let mut purgatory_cargo_ids = Vec::new();
+        let now_tick = self.now_tick();
 
         for car in cars {
             match self.yard.receive_car(car) {
-                Ok(Some(cargo)) => self.warehouse.store(cargo),
+                Ok(Some(cargo)) => self.warehouse.store(cargo, now_tick),
                 Ok(None) => {}
                 Err((homeless_car, e)) => {
                     intake_issues.push(homeless_car.id);
@@ -1006,7 +1047,7 @@ impl StationState {
                 .record(TelemetryEvent::CargoSentToPurgatory { cargo_ids: purgatory_cargo_ids });
         }
 
-        self.warehouse.rebuild_pending_work();
+        self.warehouse.rebuild_pending_work(now_tick);
         self.try_dispatch_from_warehouse();
 
         if let Some(channel) = reply_to {
@@ -1028,11 +1069,13 @@ impl StationState {
                 .record(TelemetryEvent::CargoRegistered { cargo_ids });
         }
 
+        let now_tick = self.now_tick();
+
         for item in cargo {
-            self.warehouse.store(item);
+            self.warehouse.store(item, now_tick);
         }
 
-        self.warehouse.rebuild_pending_work();
+        self.warehouse.rebuild_pending_work(now_tick);
         self.try_dispatch_from_warehouse();
 
         if let Some(channel) = reply_to {
@@ -1052,7 +1095,7 @@ impl StationState {
         self.neighbors.insert(neighbor, tx);
     }
 
-    pub fn handle_request_empty_cars(&mut self, count: u32) {
+    pub fn allocate_empty_cars(&mut self, count: u32) {
         for _ in 0..count {
             let safe_id = self.yard.generate_new_car_id();
             let new_car = TrainCar {
@@ -1066,8 +1109,6 @@ impl StationState {
                 self.yard.purgatory.push(rejected_asset);
             }
         }
-
-        self.try_dispatch_from_warehouse();
     }
 
     pub fn handle_engine_request(
@@ -1314,6 +1355,7 @@ impl StationState {
         let mut failed_car_ids = Vec::new();
         let mut failed_cargo_ids = Vec::new();
         let mut purgatory_cargo_ids = Vec::new();
+        let now_tick = self.now_tick();
 
         for car in cars {
             match self.yard.receive_car(car) {
@@ -1324,7 +1366,7 @@ impl StationState {
                             cargo.id, self.id
                         );
                     } else {
-                        self.warehouse.store(cargo);
+                        self.warehouse.store(cargo, now_tick);
                     }
                 }
                 Ok(None) => {}
@@ -1383,6 +1425,68 @@ impl StationState {
                         "[{}::Station {}] Failed to dispatch train {}: {:?}",
                         station_name_clone, station_id_clone, train_id, e
                     );
+                    telemetry.record(TelemetryEvent::TrainDispatchFailed { reason: format!("{:?}", e) });
+                    if let Some(request_id) = train.request_id {
+                        if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
+                            let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                                request_id,
+                                mission_id: train.mission_id,
+                                responder_id: station_id_clone,
+                                reason: format!("Failed to dispatch train {}: {:?}", train_id, e),
+                            });
+                        }
+                    }
+                    if let Some(mission_id) = train.mission_id {
+                        if !train.cars.is_empty() {
+                            match station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                                mission_id,
+                                destination: train.destination,
+                                surviving_cars: train.cars,
+                                report_to: train.report_to,
+                            }) {
+                                Ok(_) => {
+                                    info!(
+                                        "[{}::Station {}] Reported emergency SOS for train {} after dispatch failure",
+                                        station_name_clone, station_id_clone, train_id
+                                    );
+                                }
+                                Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                                    surviving_cars,
+                                    ..
+                                })) => {
+                                    let reason = format!(
+                                        "Failed to report emergency SOS for train {} after dispatch failure",
+                                        train_id
+                                    );
+                                    error!(
+                                        "[{}::Station {}] {}",
+                                        station_name_clone, station_id_clone, reason
+                                    );
+                                    telemetry.record(TelemetryEvent::EmergencySOSFailed {
+                                        reason: reason.clone(),
+                                    });
+                                    let cargo_ids: Vec<u32> = surviving_cars
+                                        .iter()
+                                        .filter_map(|car| car.cargo.as_ref().map(|c| c.id))
+                                        .collect();
+                                    if !cargo_ids.is_empty() {
+                                        telemetry.record(TelemetryEvent::CargoExpiredInTransit { cargo_ids });
+                                    }
+                                }
+                                Err(mpsc::SendError(other)) => {
+                                    let reason = format!(
+                                        "Failed to report emergency SOS for train {} after dispatch failure; unexpected payload: {:?}",
+                                        train_id, other
+                                    );
+                                    error!(
+                                        "[{}::Station {}] {}",
+                                        station_name_clone, station_id_clone, reason
+                                    );
+                                    telemetry.record(TelemetryEvent::EmergencySOSFailed { reason });
+                                }
+                            }
+                        }
+                    }
                     return;
                 }
             };
@@ -1422,33 +1526,280 @@ impl StationState {
                 if let Some(mission_id) = train.mission_id {
                     if !train.cars.is_empty() {
                         telemetry.record(TelemetryEvent::TrainDerailed);
-                        let _ = station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                        match station_tx_clone.send(StationCommand::HandleEmergencySOS {
                             mission_id,
                             destination: train.destination,
                             surviving_cars: train.cars,
                             report_to: train.report_to,
-                        });
+                        }) {
+                            Ok(_) => {
+                                info!(
+                                    "[{}::Station {}] Reported emergency SOS for derailed train {}",
+                                    station_name_clone, station_id_clone, train_id
+                                );
+                            }
+                            Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                                surviving_cars,
+                                ..
+                            })) => {
+                                let reason = format!(
+                                    "Failed to report emergency SOS for derailed train {}",
+                                    train_id
+                                );
+                                error!(
+                                    "[{}::Station {}] {}",
+                                    station_name_clone, station_id_clone, reason
+                                );
+                                telemetry.record(TelemetryEvent::EmergencySOSFailed {
+                                    reason: reason.clone(),
+                                });
+                                let cargo_ids: Vec<u32> = surviving_cars
+                                    .iter()
+                                    .filter_map(|car| car.cargo.as_ref().map(|c| c.id))
+                                    .collect();
+                                if !cargo_ids.is_empty() {
+                                    telemetry.record(TelemetryEvent::CargoExpiredInTransit {
+                                        cargo_ids,
+                                    });
+                                }
+                            }
+                            Err(mpsc::SendError(other)) => {
+                                let reason = format!(
+                                    "Failed to report emergency SOS for derailed train {} ; unexpected payload: {:?}",
+                                    train_id, other
+                                );
+                                error!(
+                                    "[{}::Station {}] {}",
+                                    station_name_clone, station_id_clone, reason
+                                );
+                                telemetry.record(TelemetryEvent::EmergencySOSFailed { reason });
+                            }
+                        }
                     }
                 }
 
                 return;
             }
+            let transfer_failure_target = train.request_id.and_then(|request_id| {
+                train
+                    .engine_request_reply_to
+                    .as_ref()
+                    .map(|reply_to| (request_id, train.mission_id, reply_to.clone()))
+            });
 
-            if next_stop_handle
-                .send(StationCommand::ReceiveTrain {
-                    train,
-                    reply_to: transit_tx,
-                })
-                .is_err()
-            {
-                error!(
-                    "[{}::Station {}] Failed to forward train {} to {}",
-                    station_name_clone, station_id_clone, train_id, next_stop
-                );
-                return;
+            match next_stop_handle.send(StationCommand::ReceiveTrain {
+                train,
+                reply_to: transit_tx,
+            }) {
+                Ok(_) => {
+                    info!(
+                        "[{}::Station {}] Train {} successfully forwarded to {}",
+                        station_name_clone, station_id_clone, train_id, next_stop
+                    );
+                }
+                Err(mpsc::SendError(StationCommand::ReceiveTrain { train, .. })) => {
+                    error!(
+                        "[{}::Station {}] Failed to forward train {} to {}",
+                        station_name_clone, station_id_clone, train_id, next_stop
+                    );
+
+                    telemetry.record(TelemetryEvent::TrainForwardFailed { reason: format!("Failed to forward train {} to {}", train_id, next_stop) });
+                    if let Some(request_id) = train.request_id {
+                        if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
+                            let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                                request_id,
+                                mission_id: train.mission_id,
+                                responder_id: station_id_clone,
+                                reason: format!(
+                                    "Failed to forward train {} to {}: destination station unreachable",
+                                    train_id, next_stop
+                                ),
+                            });
+                        }
+                    }
+                    if let Some(mission_id) = train.mission_id {
+                        if !train.cars.is_empty() {
+                            match station_tx_clone.send(StationCommand::HandleEmergencySOS {
+                                mission_id,
+                                destination: train.destination,
+                                surviving_cars: train.cars,
+                                report_to: train.report_to,
+                            }) {
+                                Ok(_) => {
+                                    info!(
+                                        "[{}::Station {}] Reported emergency SOS for train {} after forward failure",
+                                        station_name_clone, station_id_clone, train_id
+                                    );
+                                }
+                                Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                                    surviving_cars,
+                                    ..
+                                })) => {
+                                    let reason = format!(
+                                        "Failed to report emergency SOS for train {} after forward failure",
+                                        train_id
+                                    );
+                                    error!(
+                                        "[{}::Station {}] {}",
+                                        station_name_clone, station_id_clone, reason
+                                    );
+                                    telemetry.record(TelemetryEvent::EmergencySOSFailed {
+                                        reason: reason.clone(),
+                                    });
+                                    let cargo_ids: Vec<u32> = surviving_cars
+                                        .iter()
+                                        .filter_map(|car| car.cargo.as_ref().map(|c| c.id))
+                                        .collect();
+                                    if !cargo_ids.is_empty() {
+                                        telemetry.record(TelemetryEvent::CargoExpiredInTransit {
+                                            cargo_ids,
+                                        });
+                                    }
+                                }
+                                Err(mpsc::SendError(other)) => {
+                                    let reason = format!(
+                                        "Failed to report emergency SOS for train {} after forward failure; unexpected payload: {:?}",
+                                        train_id, other
+                                    );
+                                    error!(
+                                        "[{}::Station {}] {}",
+                                        station_name_clone, station_id_clone, reason
+                                    );
+                                    telemetry.record(TelemetryEvent::EmergencySOSFailed {
+                                        reason,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+                Err(mpsc::SendError(other)) => {
+                    error!(
+                        "[{}::Station {}] Failed to forward train {} to {} due to unexpected payload: {:?}",
+                        station_name_clone, station_id_clone, train_id, next_stop, other
+                    );
+                    telemetry.record(TelemetryEvent::TrainForwardFailed {
+                        reason: format!(
+                            "Failed to forward train {} to {} due to unexpected payload",
+                            train_id, next_stop
+                        ),
+                    });
+                    return;
+                }
             }
 
-            let _ = transit_rx.recv();
+            // if next_stop_handle
+            //     .send(StationCommand::ReceiveTrain {
+            //         train,
+            //         reply_to: transit_tx,
+            //     })
+            //     .is_err()
+            // {
+            //     error!(
+            //         "[{}::Station {}] Failed to forward train {} to {}",
+            //         station_name_clone, station_id_clone, train_id, next_stop
+            //     );
+            //     telemetry.record(TelemetryEvent::TrainForwardFailed { reason: format!("Failed to forward train {} to {}", train_id, next_stop) });
+            //     if let Some(request_id) = train.request_id {
+            //         if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
+            //             let _ = reply_to.send(StationCommand::EngineTransferFailed {
+            //                 request_id,
+            //                 mission_id: train.mission_id,
+            //                 responder_id: station_id_clone,
+            //                 reason: format!(
+            //                     "Failed to forward train {} to {}: destination station unreachable",
+            //                     train_id, next_stop
+            //                 ),
+            //             });
+            //         }
+            //     }
+            //     if let Some(mission_id) = train.mission_id {
+            //         if !train.cars.is_empty() {
+            //             let _ = station_tx_clone.send(StationCommand::HandleEmergencySOS {
+            //                 mission_id,
+            //                 destination: train.destination,
+            //                 surviving_cars: train.cars,
+            //                 report_to: train.report_to,
+            //             });
+            //         }
+            //     }
+            //     return;
+            // }
+
+            let transit_ack_timeout = Duration::from_millis(STATION_HEARTBEAT_MS.saturating_mul(5));
+            match transit_rx.recv_timeout(transit_ack_timeout) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    let reason = format!(
+                        "Next stop {} rejected train {} during intake: {:?}",
+                        next_stop, train_id, e
+                    );
+                    warn!(
+                        "[{}::Station {}] {}",
+                        station_name_clone, station_id_clone, reason
+                    );
+                    telemetry.record(TelemetryEvent::TrainForwardFailed {
+                        reason: reason.clone(),
+                    });
+
+                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    {
+                        let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                            request_id: *request_id,
+                            mission_id: *mission_id,
+                            responder_id: station_id_clone,
+                            reason,
+                        });
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    let reason = format!(
+                        "Timed out waiting for transit ACK for train {} to station {}",
+                        train_id, next_stop
+                    );
+                    warn!(
+                        "[{}::Station {}] {}",
+                        station_name_clone, station_id_clone, reason
+                    );
+                    telemetry.record(TelemetryEvent::TrainForwardFailed {
+                        reason: reason.clone(),
+                    });
+
+                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    {
+                        let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                            request_id: *request_id,
+                            mission_id: *mission_id,
+                            responder_id: station_id_clone,
+                            reason,
+                        });
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let reason = format!(
+                        "Transit ACK channel disconnected for train {} to station {}",
+                        train_id, next_stop
+                    );
+                    warn!(
+                        "[{}::Station {}] {}",
+                        station_name_clone, station_id_clone, reason
+                    );
+                    telemetry.record(TelemetryEvent::TrainForwardFailed {
+                        reason: reason.clone(),
+                    });
+
+                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    {
+                        let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                            request_id: *request_id,
+                            mission_id: *mission_id,
+                            responder_id: station_id_clone,
+                            reason,
+                        });
+                    }
+                }
+            }
         });
     }
 }

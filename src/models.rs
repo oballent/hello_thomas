@@ -11,13 +11,6 @@ const BOLD: &str = "\x1b[1m";
 
 pub const STATION_HEARTBEAT_MS: u64 = 500;
 
-pub fn now_unix_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 // Priority quotient for scheduling:
 // (current_time - created_time) / (expire_time - created_time)
 // Returned in parts-per-million (0..=1_000_000), clamped to [0, 1].
@@ -418,9 +411,6 @@ pub enum StationCommand {
     NewNeighbor {
         neighbor: u32,
         neighbor_tx: Sender<StationCommand>,
-    },
-    RequestEmptyCars {
-        count: u32,
     },
     EngineRequest { 
         requester_id: u32,
