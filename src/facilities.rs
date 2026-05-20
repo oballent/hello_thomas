@@ -12,6 +12,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
+pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
+pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
+// pub type StationTx = Sender<StationCommand>;
+// pub type StationRx = Receiver<StationCommand>;
+
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
 const GREEN: &str = "\x1b[32m";
@@ -418,12 +425,12 @@ impl Station {
     pub fn new(
         id: u32,
         name: &str,
-        neighbors: HashMap<u32, Sender<StationCommand>>,
-        tx: Sender<StationCommand>,
+        neighbors: HashMap<u32, StationTx>,
+        tx: StationTx,
         map: Arc<RailwayNetwork>,
         telemetry: TelemetryClient,
         sim_tick: Arc<AtomicU64>,
-        rx: Receiver<StationCommand>,
+        rx: StationRx,
     ) {
         let station_name = String::from(name);
         let station_id = id;
@@ -482,13 +489,13 @@ pub struct StationState {
     pub yard: Railyard,
     pub roundhouse: Roundhouse,
     pub warehouse: Warehouse,
-    pub neighbors: HashMap<u32, Sender<StationCommand>>,
+    pub neighbors: HashMap<u32, StationTx>,
     pub map: Arc<RailwayNetwork>,
     pub telemetry: TelemetryClient,
     pub sim_tick: Arc<AtomicU64>,
     pub seen_engine_request: HashSet<u32>,
     pub pending_engine_requests: HashMap<u32, EngineRequestState>,
-    pub tx: Sender<StationCommand>,
+    pub tx: StationTx,
 }
 
 impl CanReport for StationState {
@@ -516,10 +523,10 @@ impl StationState {
     pub fn new(
         id: u32,
         name: String,
-        neighbors: HashMap<u32, Sender<StationCommand>>,
+        neighbors: HashMap<u32, StationTx>,
         map: Arc<RailwayNetwork>,
         telemetry: TelemetryClient,
-        tx: Sender<StationCommand>,
+        tx: StationTx,
         sim_tick: Arc<AtomicU64>,
     ) -> Self {
         Self {
@@ -1091,7 +1098,7 @@ impl StationState {
         self.try_dispatch_from_warehouse();
     }
 
-    pub fn handle_new_neighbor(&mut self, neighbor: u32, tx: Sender<StationCommand>) {
+    pub fn handle_new_neighbor(&mut self, neighbor: u32, tx: StationTx) {
         self.neighbors.insert(neighbor, tx);
     }
 

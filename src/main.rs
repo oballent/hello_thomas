@@ -2,7 +2,7 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::facilities::Station;
+use crate::facilities::{Station, StationRx, StationTx};
 use crate::models::{Cargo, Engine, EngineType, Location, StationCommand, STATION_HEARTBEAT_MS};
 use crate::network::{RailwayNetwork, TelemetryLedger};
 
@@ -11,6 +11,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self as std_mpsc};
+
+use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
+// pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
+// pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
+
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -61,7 +68,8 @@ pub struct TrackConfig {
     pub destination: u32,
 }
 
-fn main() {
+
+#[tokio::main] async fn main() {
     let _log_guard = init_tracing();
     info!("Starting station-centric Sodor simulation...");
 
@@ -75,11 +83,12 @@ fn main() {
     );
 
     let mut network = RailwayNetwork::new();
-    let mut switchboard: HashMap<u32, Sender<StationCommand>> = HashMap::new();
-    let mut receivers: HashMap<u32, Receiver<StationCommand>> = HashMap::new();
+    let mut switchboard: HashMap<u32, StationTx> = HashMap::new();
+    let mut receivers: HashMap<u32, StationRx> = HashMap::new();
 
     for station in &config.stations {
-        let (tx, rx) = mpsc::channel();
+        //let (tx, rx) = mpsc::channel();
+        let (tx, rx) = unbounded_channel::<StationCommand>();
         switchboard.insert(station.id, tx);
         receivers.insert(station.id, rx);
         network.register_station(
@@ -113,8 +122,8 @@ fn main() {
     let build_neighbors = |
         station_id: u32,
         net: &RailwayNetwork,
-        board: &HashMap<u32, Sender<StationCommand>>,
-    | -> HashMap<u32, Sender<StationCommand>> {
+        board: &HashMap<u32, StationTx>,
+    | -> HashMap<u32, StationTx> {
         net.get_tracks(&station_id)
             .into_iter()
             .flatten()
