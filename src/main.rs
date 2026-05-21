@@ -2,8 +2,8 @@ mod models;
 mod facilities;
 mod network;
 
-use crate::facilities::{Station, StationRx, StationTx};
-use crate::models::{Cargo, Engine, EngineType, Location, StationCommand, STATION_HEARTBEAT_MS};
+use crate::facilities::{Station};
+use crate::models::{Cargo, Engine, EngineType, Location, StationCommand, STATION_HEARTBEAT_MS, StationTx, StationRx};
 use crate::network::{RailwayNetwork, TelemetryLedger};
 
 use rand::Rng;
@@ -14,9 +14,12 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::mpsc::{self as std_mpsc};
 
 use tokio::sync::mpsc::unbounded_channel;
-use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
+//use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
 // pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
 // pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
+
+use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedSender, UnboundedReceiver,};
+use tokio::sync::oneshot::{self as tokio_oneshot, Sender as OneShotSender, Receiver as OneShotReceiver,};
 
 use std::sync::Arc;
 use std::thread;
@@ -203,13 +206,13 @@ pub struct TrackConfig {
             };
             global_engine_id += 1;
 
-            let (reply_tx, reply_rx) = mpsc::channel();
+            let (reply_tx, mut reply_rx) = tokio_oneshot::channel();
             tx.send(StationCommand::IntakeEngine {
                 engine,
                 reply_to: reply_tx,
             })
             .expect("Failed to send IntakeEngine");
-            let _ = reply_rx.recv();
+            let _ = reply_rx.try_recv();
         }
 
         let mut seed_cargo = Vec::new();
@@ -240,13 +243,13 @@ pub struct TrackConfig {
             });
         }
 
-        let (reply_tx, reply_rx) = mpsc::channel();
+        let (reply_tx, mut reply_rx) = tokio_oneshot::channel();
         tx.send(StationCommand::IntakeCargo {
             cargo: seed_cargo,
             reply_to: reply_tx,
         })
         .expect("Failed to seed cargo");
-        let _ = reply_rx.recv();
+        let _ = reply_rx.try_recv();
     }
 
     info!("Initial world seeded. Starting random cargo generator...");
@@ -300,7 +303,7 @@ pub struct TrackConfig {
             };
 
             if let Some(tx) = switchboard_gen.get(&origin) {
-                let (reply_tx, _reply_rx) = mpsc::channel();
+                let (reply_tx, _reply_rx) = tokio_oneshot::channel();
                 let _ = tx.send(StationCommand::IntakeCargo {
                     cargo: vec![cargo],
                     reply_to: reply_tx,

@@ -1,6 +1,14 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::sync::mpsc::Sender;
 use tracing::{debug, info, warn};
+//use crate::facilities::{StationTx, StationRx};
+
+//use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedSender, UnboundedReceiver,};
+use tokio::sync::oneshot::{self as tokio_oneshot, Sender as OneShotSender, Receiver as OneShotReceiver,};
+
+pub type StationTx = UnboundedSender<StationCommand>;
+pub type StationRx = UnboundedReceiver<StationCommand>;
 
 const RESET: &str = "\x1b[0m";
 const RED: &str = "\x1b[31m";
@@ -319,8 +327,8 @@ pub struct Train{
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
     pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
-    pub report_to: Option<Sender<MissionReport>>,
-    pub engine_request_reply_to: Option<Sender<StationCommand>>,
+    pub report_to: Option<OneShotSender<MissionReport>>,
+    pub engine_request_reply_to: Option<StationTx>,
 }
 
 impl Train {
@@ -388,29 +396,30 @@ pub enum StationCommand {
     Beat, // The Heartbeat: a regular tick that triggers the station to check its pending missions and take action. This is important for keeping the station's internal logic moving forward, such as checking for mission timeouts, re-evaluating pending missions, and generally keeping the station "alive" and responsive.
     ReceiveTrain {
         train: Train,
-        reply_to: Sender<Result<(), TrainError>>,
+        //reply_to: Sender<Result<(), TrainError>>,
+        reply_to: OneShotSender<Result<(), TrainError>>,
     },
     HandleEmergencySOS { 
         mission_id: u32, 
         destination: u32,
         surviving_cars: Vec<TrainCar>, 
-        report_to: Option<Sender<MissionReport>> 
+        report_to: Option<OneShotSender<MissionReport>> 
     },
     IntakeCar {
         cars: Vec<TrainCar>,
-        reply_to: Sender<Result<(), TrainError>>,
+        reply_to: OneShotSender<Result<(), TrainError>>,
     },
     IntakeCargo {
         cargo: Vec<Cargo>,
-        reply_to: Sender<Result<(), TrainError>>,
+        reply_to: OneShotSender<Result<(), TrainError>>,
     },
     IntakeEngine {
         engine: Engine,
-        reply_to: Sender<Result<(), TrainError>>,
+        reply_to: OneShotSender<Result<(), TrainError>>,
     },
     NewNeighbor {
         neighbor: u32,
-        neighbor_tx: Sender<StationCommand>,
+        neighbor_tx: StationTx, //Sender<StationCommand>,
     },
     EngineRequest { 
         requester_id: u32,
@@ -426,7 +435,7 @@ pub enum StationCommand {
         // This lives entirely on the stack. Zero heap allocation!
         branch_notified: [u32; 64], // A list of ancestor stations and their neighbors that have already been notified about this request. This prevents us from wasting TTL on sending the same request to the same station multiple times.
         notified_count: usize,
-        reply_to: Sender<StationCommand>,
+        reply_to: StationTx,
     },
     EngineRequestConfirmed {
         request_id: u32,

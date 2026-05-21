@@ -1,9 +1,10 @@
 use crate::models::{
     Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset, StationCommand, Train,
-    TrainCar, TrainError, STATION_HEARTBEAT_MS,
+    TrainCar, TrainError, STATION_HEARTBEAT_MS, StationTx, StationRx,
 };
 use crate::network::{RailwayNetwork, TelemetryClient, TelemetryEvent};
 use rand::Rng;
+//use tokio::sync::mpsc::UnboundedSender;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -12,10 +13,13 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
-use tokio::sync::mpsc::unbounded_channel;
-use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
-pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
-pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
+
+use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedSender, UnboundedReceiver,};
+use tokio::sync::oneshot::{self as tokio_oneshot, Sender as OneShotSender, Receiver as OneShotReceiver,};
+//suse tokio::sync::mpsc::unbounded_channel;
+// use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
+// pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
+// pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
 // pub type StationTx = Sender<StationCommand>;
 // pub type StationRx = Receiver<StationCommand>;
 
@@ -40,7 +44,7 @@ pub trait CanReport {
         &self,
         mission_id: u32,
         reason: &str,
-        channel: Option<Sender<MissionReport>>,
+        channel: Option<OneShotSender<MissionReport>>,
     ) {
         let name = self.get_reporter_name();
         let message = format!("Mission {} failed at {}. Reason: {}", mission_id, name, reason);
@@ -59,7 +63,7 @@ pub trait CanReport {
         mission_id: u32,
         reason: &str,
         lost_cargo_ids: &[u32],
-        channel: Option<Sender<MissionReport>>,
+        channel: Option<OneShotSender<MissionReport>>,
     ) {
         let name = self.get_reporter_name();
         let message = format!(
@@ -80,7 +84,7 @@ pub trait CanReport {
         &self,
         mission_id: u32,
         details: &str,
-        channel: Option<Sender<MissionReport>>,
+        channel: Option<OneShotSender<MissionReport>>,
     ) {
         let name = self.get_reporter_name();
         let message = format!("Mission {} successful at {}. Details: {}", mission_id, name, details);
@@ -430,7 +434,7 @@ impl Station {
         map: Arc<RailwayNetwork>,
         telemetry: TelemetryClient,
         sim_tick: Arc<AtomicU64>,
-        rx: StationRx,
+        mut rx: StationRx,
     ) {
         let station_name = String::from(name);
         let station_id = id;
@@ -445,38 +449,66 @@ impl Station {
             sim_tick,
         );
 
-        thread::spawn(move || {
+        tokio::spawn(async move {
             println!(
                 "{BOLD}{CYAN}[{}]::Station {} online.{RESET}",
                 station_name, station_id
             );
 
-            let mut last_heartbeat = Instant::now();
+            //let mut last_heartbeat = Instant::now();
 
             loop {
-                match rx.recv_timeout(Duration::from_millis(50)) {
-                    Ok(command) => {
-                        if !state.handle_command(command) {
-                            println!(
-                                "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
-                                station_name, station_id
-                            );
-                            break;
+                // match rx.recv_timeout(Duration::from_millis(50)) {
+                //     Ok(command) => {
+                //         if !state.handle_command(command) {
+                //             println!(
+                //                 "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
+                //                 station_name, station_id
+                //             );
+                //             break;
+                //         }
+                //     }
+                //     Err(mpsc::RecvTimeoutError::Timeout) => {}
+                //     Err(e) => {
+                //         println!(
+                //             "{BOLD}{RED}[{}]::Station {} channel error: {:?}.{RESET}",
+                //             station_name, station_id, e
+                //         );
+                //         break;
+                //     }
+                // }
+
+                // if last_heartbeat.elapsed() >= Duration::from_millis(STATION_HEARTBEAT_MS) {
+                //     state.handle_heartbeat();
+                //     last_heartbeat = Instant::now();
+                // }
+                tokio::select! {
+                    biased;
+
+                    maybe_command = rx.recv() => {
+                        match maybe_command {
+                            Some(command) => {
+                                if !state.handle_command(command) {
+                                    println!(
+                                        "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
+                                        station_name, station_id
+                                    );
+                                    break;
+                                }
+                            }
+                            None => {
+                                println!(
+                                    "{BOLD}{RED}[{}]::Station {} channel closed.{RESET}",
+                                    station_name, station_id
+                                );
+                                break;
+                            }
                         }
                     }
-                    Err(mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(e) => {
-                        println!(
-                            "{BOLD}{RED}[{}]::Station {} channel error: {:?}.{RESET}",
-                            station_name, station_id, e
-                        );
-                        break;
-                    }
-                }
 
-                if last_heartbeat.elapsed() >= Duration::from_millis(STATION_HEARTBEAT_MS) {
-                    state.handle_heartbeat();
-                    last_heartbeat = Instant::now();
+                    _ = tokio::time::sleep(Duration::from_millis(STATION_HEARTBEAT_MS)) => {
+                        state.handle_heartbeat();
+                    }
                 }
             }
         });
@@ -939,7 +971,7 @@ impl StationState {
         true
     }
 
-    pub fn handle_receive_train(&mut self, mut train: Train, reply_to: Sender<Result<(), TrainError>>) {
+    pub fn handle_receive_train(&mut self, mut train: Train, reply_to: OneShotSender<Result<(), TrainError>>) {
         train.engine.refuel();
 
         if train.request_id.is_some() {
@@ -1008,7 +1040,7 @@ impl StationState {
         mission_id: u32,
         _destination: u32,
         surviving_cars: Vec<TrainCar>,
-        report_to: Option<Sender<MissionReport>>,
+        report_to: Option<OneShotSender<MissionReport>>,
     ) {
         println!("{RED}[{}] EMERGENCY SOS for Mission {}.{RESET}", self.name, mission_id);
 
@@ -1029,7 +1061,7 @@ impl StationState {
         self.try_dispatch_from_warehouse();
     }
 
-    fn handle_intake_cars(&mut self, cars: Vec<TrainCar>, reply_to: Option<Sender<Result<(), TrainError>>>) {
+    fn handle_intake_cars(&mut self, cars: Vec<TrainCar>, reply_to: Option<OneShotSender<Result<(), TrainError>>>) {
         let mut intake_issues = Vec::new();
         let mut purgatory_cargo_ids = Vec::new();
         let now_tick = self.now_tick();
@@ -1069,7 +1101,7 @@ impl StationState {
         }
     }
 
-    fn handle_intake_cargo(&mut self, cargo: Vec<Cargo>, reply_to: Option<Sender<Result<(), TrainError>>>) {
+    fn handle_intake_cargo(&mut self, cargo: Vec<Cargo>, reply_to: Option<OneShotSender<Result<(), TrainError>>>) {
         let cargo_ids: Vec<u32> = cargo.iter().map(|item| item.id).collect();
         if !cargo_ids.is_empty() {
             self.telemetry
@@ -1090,7 +1122,7 @@ impl StationState {
         }
     }
 
-    pub fn handle_intake_engine(&mut self, engine: Engine, reply_to: Option<Sender<Result<(), TrainError>>>) {
+    pub fn handle_intake_engine(&mut self, engine: Engine, reply_to: Option<OneShotSender<Result<(), TrainError>>>) {
         self.roundhouse.house(engine);
         if let Some(channel) = reply_to {
             let _ = channel.send(Ok(()));
@@ -1130,7 +1162,7 @@ impl StationState {
         ttl: u32,
         branch_notified: [u32; 64],
         notified_count: usize,
-        reply_to: Sender<StationCommand>,
+        reply_to: UnboundedSender<StationCommand>,
     ) {
         if ttl == 0 {
             return;
@@ -1272,7 +1304,7 @@ impl StationState {
         ttl: u32,
         branch_notified: [u32; 64],
         notified_count: usize,
-        reply_to: Sender<StationCommand>,
+        reply_to: UnboundedSender<StationCommand>,
     ) {
         if ttl == 0 {
             return;
@@ -1422,9 +1454,9 @@ impl StationState {
         let train_id = train.id;
         let station_name_clone = self.name.clone();
         let station_id_clone = self.id;
-        let (transit_tx, transit_rx) = mpsc::channel();
+        let (transit_tx, transit_rx) = tokio_oneshot::channel();
 
-        thread::spawn(move || {
+        tokio::spawn(async move {
             let time_to_travel = match train.dispatch(distance_to_next_stop) {
                 Ok(t) => t,
                 Err(e) => {
@@ -1507,7 +1539,8 @@ impl StationState {
                 time_to_travel
             );
 
-            thread::sleep(Duration::from_secs_f64(time_to_travel));
+            //thread::sleep(Duration::from_secs_f64(time_to_travel));
+            tokio::time::sleep(Duration::from_secs_f64(time_to_travel)).await;
 
             let derail = rand::thread_rng().gen_bool(0.1);
             if derail {
@@ -1735,7 +1768,7 @@ impl StationState {
             // }
 
             let transit_ack_timeout = Duration::from_millis(STATION_HEARTBEAT_MS.saturating_mul(5));
-            match transit_rx.recv_timeout(transit_ack_timeout) {
+            match tokio::time::timeout(transit_ack_timeout, transit_rx.try_recv()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     let reason = format!(
