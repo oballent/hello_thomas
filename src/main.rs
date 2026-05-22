@@ -212,7 +212,19 @@ pub struct TrackConfig {
                 reply_to: reply_tx,
             })
             .expect("Failed to send IntakeEngine");
-            let _ = reply_rx.try_recv();
+
+            //let _ = reply_rx.try_recv();
+            match reply_rx.await {
+                Ok(Ok(())) => {
+                    // Successfully added engine
+                }
+                Ok(Err(e)) => {
+                    panic!("Failed to intake engine at station {}: format!{:?}! This shouldn't happen right away!", station.id, e);
+                }
+                Err(_) => {
+                    panic!("IntakeEngine response channel closed for station {}! But this shouldn't happen right away!", station.id);
+                }
+            }
         }
 
         let mut seed_cargo = Vec::new();
@@ -249,7 +261,19 @@ pub struct TrackConfig {
             reply_to: reply_tx,
         })
         .expect("Failed to seed cargo");
-        let _ = reply_rx.try_recv();
+
+        //let _ = reply_rx.try_recv();
+        match reply_rx.await {
+            Ok(Ok(())) => {
+                // Successfully added cargo
+            }
+            Ok(Err(e)) => {
+                panic!("Failed to intake seed cargo at station {}: format!{:?}! This shouldn't happen right away!", station.id, e);
+            }
+            Err(_) => {
+                panic!("IntakeCargo response channel closed for station {}! But this shouldn't happen right away!", station.id);
+            }
+        }
     }
 
     info!("Initial world seeded. Starting random cargo generator...");

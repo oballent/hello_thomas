@@ -1489,7 +1489,7 @@ impl StationState {
                                         station_name_clone, station_id_clone, train_id
                                     );
                                 }
-                                Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                                Err(tokio_mpsc::error::SendError(StationCommand::HandleEmergencySOS {
                                     surviving_cars,
                                     ..
                                 })) => {
@@ -1512,7 +1512,7 @@ impl StationState {
                                         telemetry.record(TelemetryEvent::CargoExpiredInTransit { cargo_ids });
                                     }
                                 }
-                                Err(mpsc::SendError(other)) => {
+                                Err(tokio_mpsc::error::SendError(other)) => {
                                     let reason = format!(
                                         "Failed to report emergency SOS for train {} after dispatch failure; unexpected payload: {:?}",
                                         train_id, other
@@ -1578,7 +1578,7 @@ impl StationState {
                                     station_name_clone, station_id_clone, train_id
                                 );
                             }
-                            Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                            Err(tokio_mpsc::error::SendError(StationCommand::HandleEmergencySOS {
                                 surviving_cars,
                                 ..
                             })) => {
@@ -1603,7 +1603,7 @@ impl StationState {
                                     });
                                 }
                             }
-                            Err(mpsc::SendError(other)) => {
+                            Err(tokio_mpsc::error::SendError(other)) => {
                                 let reason = format!(
                                     "Failed to report emergency SOS for derailed train {} ; unexpected payload: {:?}",
                                     train_id, other
@@ -1637,7 +1637,7 @@ impl StationState {
                         station_name_clone, station_id_clone, train_id, next_stop
                     );
                 }
-                Err(mpsc::SendError(StationCommand::ReceiveTrain { train, .. })) => {
+                Err(tokio_mpsc::error::SendError(StationCommand::ReceiveTrain { train, .. })) => {
                     error!(
                         "[{}::Station {}] Failed to forward train {} to {}",
                         station_name_clone, station_id_clone, train_id, next_stop
@@ -1671,7 +1671,7 @@ impl StationState {
                                         station_name_clone, station_id_clone, train_id
                                     );
                                 }
-                                Err(mpsc::SendError(StationCommand::HandleEmergencySOS {
+                                Err(tokio_mpsc::error::SendError(StationCommand::HandleEmergencySOS {
                                     surviving_cars,
                                     ..
                                 })) => {
@@ -1696,7 +1696,7 @@ impl StationState {
                                         });
                                     }
                                 }
-                                Err(mpsc::SendError(other)) => {
+                                Err(tokio_mpsc::error::SendError(other)) => {
                                     let reason = format!(
                                         "Failed to report emergency SOS for train {} after forward failure; unexpected payload: {:?}",
                                         train_id, other
@@ -1714,7 +1714,7 @@ impl StationState {
                     }
                     return;
                 }
-                Err(mpsc::SendError(other)) => {
+                Err(tokio_mpsc::error::SendError(other)) => {
                     error!(
                         "[{}::Station {}] Failed to forward train {} to {} due to unexpected payload: {:?}",
                         station_name_clone, station_id_clone, train_id, next_stop, other
@@ -1768,9 +1768,9 @@ impl StationState {
             // }
 
             let transit_ack_timeout = Duration::from_millis(STATION_HEARTBEAT_MS.saturating_mul(5));
-            match tokio::time::timeout(transit_ack_timeout, transit_rx.try_recv()).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
+            match tokio::time::timeout(transit_ack_timeout, transit_rx).await {
+                Ok(Ok(Ok(()))) => {}
+                Ok(Ok(Err(e))) => {
                     let reason = format!(
                         "Next stop {} rejected train {} during intake: {:?}",
                         next_stop, train_id, e
@@ -1793,7 +1793,7 @@ impl StationState {
                         });
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(_) => {
                     let reason = format!(
                         "Timed out waiting for transit ACK for train {} to station {}",
                         train_id, next_stop
@@ -1816,7 +1816,7 @@ impl StationState {
                         });
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                Ok(Err(_)) => {
                     let reason = format!(
                         "Transit ACK channel disconnected for train {} to station {}",
                         train_id, next_stop
