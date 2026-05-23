@@ -115,9 +115,11 @@ pub struct TrackConfig {
 
     let sim_tick_clock = Arc::clone(&sim_tick);
     let sim_clock_running_thread = Arc::clone(&sim_clock_running);
-    let sim_clock = thread::spawn(move || {
+
+    let sim_clock = tokio::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_millis(STATION_HEARTBEAT_MS));
         while sim_clock_running_thread.load(Ordering::SeqCst) {
-            thread::sleep(Duration::from_millis(STATION_HEARTBEAT_MS));
+            tick.tick().await;
             sim_tick_clock.fetch_add(1, Ordering::SeqCst);
         }
     });
@@ -219,10 +221,10 @@ pub struct TrackConfig {
                     // Successfully added engine
                 }
                 Ok(Err(e)) => {
-                    panic!("Failed to intake engine at station {}: format!{:?}! This shouldn't happen right away!", station.id, e);
+                    panic!("Failed to intake engine at station {}: format!{:?}! This shouldn't happen at seed!", station.id, e);
                 }
                 Err(_) => {
-                    panic!("IntakeEngine response channel closed for station {}! But this shouldn't happen right away!", station.id);
+                    panic!("IntakeEngine response channel closed for station {}! But this shouldn't happen at seed!", station.id);
                 }
             }
         }
@@ -268,10 +270,10 @@ pub struct TrackConfig {
                 // Successfully added cargo
             }
             Ok(Err(e)) => {
-                panic!("Failed to intake seed cargo at station {}: format!{:?}! This shouldn't happen right away!", station.id, e);
+                panic!("Failed to intake seed cargo at station {}: format!{:?}! This shouldn't happen at seed!", station.id, e);
             }
             Err(_) => {
-                panic!("IntakeCargo response channel closed for station {}! But this shouldn't happen right away!", station.id);
+                panic!("IntakeCargo response channel closed for station {}! But this shouldn't happen at seed!", station.id);
             }
         }
     }
@@ -285,8 +287,11 @@ pub struct TrackConfig {
     let cargo_counter_gen = Arc::clone(&cargo_counter);
     let sim_tick_gen = Arc::clone(&sim_tick);
 
-    let generator = thread::spawn(move || {
-        let mut rng = rand::thread_rng();
+    let generator = tokio::spawn(async move {
+        //let mut rng = rand::thread_rng();
+        // Use StdRng which is Send-safe
+        use rand::SeedableRng;
+        let mut rng = rand::rngs::StdRng::from_entropy();
         let item_types = [
             "Foam",
             "Bananas",
@@ -299,12 +304,20 @@ pub struct TrackConfig {
             "Electronics",
         ];
 
+        let mut tick = tokio::time::interval(Duration::from_millis(150));
+        
         while running_gen.load(Ordering::SeqCst) {
+
+            tick.tick().await;
+
+            //let mut rng = rand::thread_rng();
+
+
             let origin = station_ids_gen[rng.gen_range(0..station_ids_gen.len())];
-            let mut destination = origin;
-            while destination == origin {
-                destination = station_ids_gen[rng.gen_range(0..station_ids_gen.len())];
-            }
+            //let mut destination = origin;
+            // Filter out the origin, collect the remaining IDs, and pick one randomly.
+            let candidates: Vec<u32> = station_ids_gen.iter().copied().filter(|&id| id != origin).collect();
+            let destination = candidates[rng.gen_range(0..candidates.len())];
 
             let cargo_id = cargo_counter_gen.fetch_add(1, Ordering::SeqCst);
             let created_time_ms = sim_tick_gen.load(Ordering::SeqCst);
@@ -327,23 +340,49 @@ pub struct TrackConfig {
             };
 
             if let Some(tx) = switchboard_gen.get(&origin) {
-                let (reply_tx, _reply_rx) = tokio_oneshot::channel();
-                let _ = tx.send(StationCommand::IntakeCargo {
+                let (reply_tx, reply_rx) = tokio_oneshot::channel();
+                // let _ = tx.send(StationCommand::IntakeCargo {
+                //     cargo: vec![cargo],
+                //     reply_to: reply_tx,
+                // });
+                match tx.send(StationCommand::IntakeCargo {
                     cargo: vec![cargo],
                     reply_to: reply_tx,
-                });
-            }
+                }) {
+                    Ok(()) => {
+                        // Successfully sent new cargo
+                    }
+                    Err(e) => {
+                        warn!("Failed to send new cargo to station {}: {}. This might happen if the station is busy or shutting down.", origin, e);
+                        continue;
+                    }
+                }
 
-            thread::sleep(Duration::from_millis(150));
+                
+                match tokio::time::timeout(Duration::from_millis(150), reply_rx).await {
+                    Ok(Ok(Ok(()))) => {
+                        // Successfully added cargo
+                    }
+                    Ok(Ok(Err(e))) => {
+                        warn!("Failed to intake generated cargo at station {}: {:?}! This might happen if the station is busy or shutting down.", origin, e);
+                    }
+                    Ok(Err(_)) => {
+                        warn!("IntakeCargo response channel closed for station {}! This might happen if the station is busy or shutting down.", origin);
+                    }
+                    Err(_) => {
+                        warn!("IntakeCargo response timed out for station {}! This might happen if the station is busy or shutting down.", origin);
+                    }
+                }
+            }
         }
     });
 
     let simulation_runtime = Duration::from_secs(12);
     info!("Simulation running for {:?}...", simulation_runtime);
-    thread::sleep(simulation_runtime);
+    tokio::time::sleep(simulation_runtime).await;
 
     running.store(false, Ordering::SeqCst);
-    let _ = generator.join();
+    let _ = generator.await;
 
     info!("Generator stopped. Waiting for cargo lifecycle to drain...");
     let drain_deadline = Instant::now() + Duration::from_secs(45);
@@ -373,7 +412,7 @@ pub struct TrackConfig {
             break;
         }
 
-        thread::sleep(Duration::from_millis(250));
+        tokio::time::sleep(Duration::from_millis(250)).await;
     }
 
     for station_id in &station_ids {
@@ -383,10 +422,10 @@ pub struct TrackConfig {
         }
     }
 
-    thread::sleep(Duration::from_millis(300));
+    tokio::time::sleep(Duration::from_millis(300)).await;
 
     sim_clock_running.store(false, Ordering::SeqCst);
-    let _ = sim_clock.join();
+    let _ = sim_clock.await;
 
     info!("TelemetryLedger Status: {:#?}", telemetry.snapshot());
     telemetry.shutdown();

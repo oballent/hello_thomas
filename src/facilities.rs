@@ -456,38 +456,17 @@ impl Station {
             );
 
             //let mut last_heartbeat = Instant::now();
+            let mut heartbeat = tokio::time::interval(Duration::from_millis(STATION_HEARTBEAT_MS));
+
 
             loop {
-                // match rx.recv_timeout(Duration::from_millis(50)) {
-                //     Ok(command) => {
-                //         if !state.handle_command(command) {
-                //             println!(
-                //                 "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
-                //                 station_name, station_id
-                //             );
-                //             break;
-                //         }
-                //     }
-                //     Err(mpsc::RecvTimeoutError::Timeout) => {}
-                //     Err(e) => {
-                //         println!(
-                //             "{BOLD}{RED}[{}]::Station {} channel error: {:?}.{RESET}",
-                //             station_name, station_id, e
-                //         );
-                //         break;
-                //     }
-                // }
-
-                // if last_heartbeat.elapsed() >= Duration::from_millis(STATION_HEARTBEAT_MS) {
-                //     state.handle_heartbeat();
-                //     last_heartbeat = Instant::now();
-                // }
                 tokio::select! {
                     biased;
 
                     maybe_command = rx.recv() => {
                         match maybe_command {
                             Some(command) => {
+                                // The terminate command returns false, executing the shutdown sequence and breaking the loop. All other commands return true to keep the station running.
                                 if !state.handle_command(command) {
                                     println!(
                                         "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
@@ -506,7 +485,7 @@ impl Station {
                         }
                     }
 
-                    _ = tokio::time::sleep(Duration::from_millis(STATION_HEARTBEAT_MS)) => {
+                    _ = heartbeat.tick() => {
                         state.handle_heartbeat();
                     }
                 }
