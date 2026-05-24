@@ -211,7 +211,7 @@ pub struct TrackConfig {
             let (reply_tx, mut reply_rx) = tokio_oneshot::channel();
             tx.send(StationCommand::IntakeEngine {
                 engine,
-                reply_to: reply_tx,
+                reply_to: Some(reply_tx),
             })
             .expect("Failed to send IntakeEngine");
 

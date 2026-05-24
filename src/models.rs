@@ -415,7 +415,7 @@ pub enum StationCommand {
     },
     IntakeEngine {
         engine: Engine,
-        reply_to: OneShotSender<Result<(), TrainError>>,
+        reply_to: Option<OneShotSender<Result<(), TrainError>>>, // This is optional because sometimes we might want to just dump an engine into the station without waiting for a response
     },
     NewNeighbor {
         neighbor: u32,
@@ -437,17 +437,29 @@ pub enum StationCommand {
         notified_count: usize,
         reply_to: StationTx,
     },
-    EngineRequestConfirmed {
-        request_id: u32,
-        mission_id: Option<u32>,
-        responder_id: u32,
-        engine_id: u32,
-    },
+    // EngineRequestConfirmed {
+    //     request_id: u32,
+    //     mission_id: Option<u32>,
+    //     responder_id: u32,
+    //     engine_id: u32,
+    // },
     EngineTransferFailed {
         request_id: u32,
         mission_id: Option<u32>,
         responder_id: u32,
         reason: String,
+    },
+
+    OfferEngine {
+        request_id: u32,
+        mission_id: Option<u32>,
+        responder_id: u32,
+        engine_id: u32,
+        reply_to: OneShotSender<bool>, // The handshake channel!
+    },
+    CommitDispatch {
+        train: Train,
+        route: Vec<u32>,
     },
     
     CheckStatus, // The Alarm Clock: station sends to itself every X seconds to trigger a check of the pending missions list, which is stored locally at each station. 
