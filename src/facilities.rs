@@ -4,6 +4,7 @@ use crate::models::{
 };
 use crate::network::{RailwayNetwork, TelemetryClient, TelemetryEvent};
 use rand::Rng;
+use core::error;
 //use tokio::sync::mpsc::UnboundedSender;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -505,7 +506,7 @@ pub struct StationState {
     pub telemetry: TelemetryClient,
     pub sim_tick: Arc<AtomicU64>,
     pub seen_engine_request: HashSet<u32>,
-    pub pending_engine_requests: HashMap<u32, EngineRequestState>,
+    pending_engine_requests: HashMap<u32, EngineRequestState>,
     pub tx: StationTx,
 }
 
@@ -699,51 +700,7 @@ impl StationState {
         self.warehouse.rebuild_pending_work(now_tick);
     }
 
-    // fn handle_engine_request_confirmed(
-    //     &mut self,
-    //     request_id: u32,
-    //     mission_id: Option<u32>,
-    //     responder_id: u32,
-    //     engine_id: u32,
-    // ) {
-    //     let Some(cargo_id) = mission_id else {
-    //         return;
-    //     };
-
-    //     match self.pending_engine_requests.get(&cargo_id).copied() {
-    //         Some(EngineRequestState::Searching {
-    //             request_id: active_request_id,
-    //             ..
-    //         }) if active_request_id == request_id => {
-    //             info!(
-    //                 "[{}] Request {} for Cargo {} promised by Station {} (Engine {})",
-    //                 self.name, request_id, cargo_id, responder_id, engine_id
-    //             );
-    //             self.pending_engine_requests.insert(
-    //                 cargo_id,
-    //                 EngineRequestState::Promised {
-    //                     request_id,
-    //                     responder_id,
-    //                     engine_id,
-    //                 },
-    //             );
-    //         }
-    //         Some(_) => {
-    //             debug!(
-    //                 "[{}] Ignoring stale EngineRequestConfirmed for Cargo {} (request_id={})",
-    //                 self.name, cargo_id, request_id
-    //             );
-    //         }
-    //         None => {
-    //             debug!(
-    //                 "[{}] Ignoring EngineRequestConfirmed for Cargo {} with no pending request",
-    //                 self.name, cargo_id
-    //             );
-    //         }
-    //     }
-    // }
-
-        fn handle_offer_engine(
+    fn handle_offer_engine(
         &mut self,
         request_id: u32,
         mission_id: Option<u32>,
@@ -988,6 +945,7 @@ impl StationState {
             cars: attached_cars,
             mission_id: Some(mission_id),
             request_id: None,
+            responder_id: None,
             destination,
             report_to: None,
             engine_request_reply_to: None,
@@ -1001,25 +959,29 @@ impl StationState {
     pub fn handle_receive_train(&mut self, mut train: Train, reply_to: OneShotSender<Result<(), TrainError>>) {
         train.engine.refuel();
 
-        if train.request_id.is_some() {
-            if let Some(mission_id) = train.mission_id {
-                self.pending_engine_requests.remove(&mission_id);
-            }
-            if !train.cars.is_empty() {
-                let _ = self.process_cars(train.cars, train.mission_id, false);
-            }
-            self.roundhouse.house(train.engine);
-            let _ = reply_to.send(Ok(()));
-            self.try_dispatch_from_warehouse();
-            return;
-        }
-
         let _ = reply_to.send(Ok(()));
 
         if self.id == train.destination {
+
+
+            if train.request_id.is_some() {
+                if let Some(mission_id) = train.mission_id {
+                    self.pending_engine_requests.remove(&mission_id);
+                }
+                if !train.cars.is_empty() {
+                    let _ = self.process_cars(train.cars, train.mission_id, false);
+                }
+                self.roundhouse.house(train.engine);
+                //let _ = reply_to.send(Ok(()));
+                self.try_dispatch_from_warehouse();
+                return;
+            }
+
+
+
             let mission_id = train.mission_id;
             let report_to = train.report_to;
-
+  
             self.roundhouse.house(train.engine);
             let outcome = self.process_cars(train.cars, mission_id, true);
 
@@ -1216,120 +1178,79 @@ impl StationState {
 
         if route_to_requester.len() > 1 {
             for i in 0..route_to_requester.len() - 1 {
-                if let Some(dist) = self
-                    .map
-                    .get_distance(route_to_requester[i], route_to_requester[i + 1])
-                {
-                    if dist > mission_max_hop {
-                        mission_max_hop = dist;
+                if let Some(dist) = self.map.get_distance(route_to_requester[i], route_to_requester[i + 1]) {
+                    if dist > max_hop_to_requester {
+                        max_hop_to_requester = dist;
                     }
                 }
             }
         }
 
-        // if self.roundhouse.total_engines() > 1 {
-        //     if let Some(engine_id) = self
-        //         .roundhouse
-        //         .find_can_fulfill_request(max_hop_to_requester, min_capacity, mission_max_hop)
-        //     {
-        //         if let Some(engine) = self.roundhouse.select_engine_by_id(engine_id) {
-        //             let _ = reply_to.send(StationCommand::EngineRequestConfirmed {
-        //                 request_id,
-        //                 mission_id,
-        //                 responder_id: self.id,
-        //                 engine_id: engine.id,
-        //             });
-        //             info!(
-        //                 "[{}] Engine {} answering request {} for requester {}",
-        //                 self.name, engine.id, request_id, requester_id
-        //             );
-        //             let transfer = Train {
-        //                 id: self.yard.generate_new_train_id(),
-        //                 engine,
-        //                 cars: Vec::new(),
-        //                 mission_id,
-        //                 request_id: Some(request_id),
-        //                 destination: requester_id,
-        //                 report_to: None,
-        //                 engine_request_reply_to: Some(reply_to.clone()),
-        //             };
-        //             self.dispatch_train(transfer, route_to_requester, self.telemetry.clone());
-        //         }
-        //     }
-        // }
+        if self.roundhouse.total_engines() > 1 {
+            if let Some(engine_id) = self
+                .roundhouse
+                .find_can_fulfill_request(max_hop_to_requester, min_capacity, mission_max_hop)
+            {
+                // Temporarily withdraw the engine from the roundhouse to prevent double-booking
+                if let Some(engine) = self.roundhouse.select_engine_by_id(engine_id) {
+                    info!(
+                        "[{}] Reserving Engine {} for request {} for requester {}; sending offer",
+                        self.name, engine.id, request_id, requester_id
+                    );
+                    
+                    let (offer_tx, offer_rx): (tokio_oneshot::Sender<bool>, tokio_oneshot::Receiver<bool>) = tokio_oneshot::channel();
+                    
+                    let offer_sent = reply_to.send(StationCommand::OfferEngine {
+                        request_id,
+                        mission_id,
+                        responder_id: self.id,
+                        engine_id: engine.id,
+                        reply_to: offer_tx,
+                    }).is_ok();
 
-                if self.roundhouse.total_engines() > 2 {
-                    if let Some(engine_id) = self
-                        .roundhouse
-                        .find_can_fulfill_request(max_hop_to_requester, min_capacity, mission_max_hop)
-                    {
-                        // Temporarily withdraw the engine from the roundhouse to prevent double-booking
-                        if let Some(engine) = self.roundhouse.select_engine_by_id(engine_id) {
-                            info!(
-                                "[{}] Reserving Engine {} for request {} for requester {}; sending offer",
-                                self.name, engine.id, request_id, requester_id
-                            );
-                            
-                            let (offer_tx, offer_rx) = tokio_oneshot::channel();
-                            
-                            let offer_sent = reply_to.send(StationCommand::OfferEngine {
-                                request_id,
-                                mission_id,
-                                responder_id: self.id,
-                                engine_id: engine.id,
-                                reply_to: offer_tx,
-                            }).is_ok();
-
-                            if offer_sent {
-                                let station_tx = self.tx.clone();
-                                let route_to_requester_clone = route_to_requester.clone();
-                                let transfer_id = self.yard.generate_new_train_id();
-                                let reply_to_clone = reply_to.clone();
-                                
-                                tokio::spawn(async move {
-                                    match offer_rx.await {
-                                        Ok(true) => {
-                                            // Accepted! Finalize the train and dispatch
-                                            let transfer = Train {
-                                                id: transfer_id,
-                                                engine,
-                                                cars: Vec::new(),
-                                                mission_id,
-                                                request_id: Some(request_id),
-                                                destination: requester_id,
-                                                report_to: None,
-                                                engine_request_reply_to: Some(reply_to_clone),
-                                            };
-                                            let _ = station_tx.send(StationCommand::CommitDispatch { 
-                                                train: transfer, 
-                                                route: route_to_requester_clone 
-                                            });
-                                        }
-                                        Ok(false) | Err(_) => {
-                                            // Rejected or channel dropped. Put the engine back.
-                                            let _ = station_tx.send(StationCommand::IntakeEngine {
-                                                engine,
-                                                reply_to: None, // No need to wait for this response
-                                            });
-                                        }
-                                    }
-                                });
-                            } else {
-                                // Failed to send offer, put engine back immediately
-                                self.roundhouse.house(engine);
+                    if offer_sent {
+                        let station_tx = self.tx.clone();
+                        let responder_id = self.id;
+                        let route_to_requester_clone = route_to_requester.clone();
+                        let transfer_id = self.yard.generate_new_train_id();
+                        let reply_to_clone = reply_to.clone();
+                        
+                        tokio::spawn(async move {
+                            match offer_rx.await {
+                                Ok(true) => {
+                                    // Accepted! Finalize the train and dispatch
+                                    let transfer = Train {
+                                        id: transfer_id,
+                                        engine,
+                                        cars: Vec::new(),
+                                        mission_id,
+                                        request_id: Some(request_id),
+                                        responder_id: Some(responder_id),
+                                        destination: requester_id,
+                                        report_to: None,
+                                        engine_request_reply_to: Some(reply_to_clone),
+                                    };
+                                    let _ = station_tx.send(StationCommand::CommitDispatch { 
+                                        train: transfer, 
+                                        route: route_to_requester_clone 
+                                    });
+                                }
+                                Ok(false) | Err(_) => {
+                                    // Rejected or channel dropped. Put the engine back.
+                                    let _ = station_tx.send(StationCommand::IntakeEngine {
+                                        engine,
+                                        reply_to: None, // No need to wait for this response
+                                    });
+                                }
                             }
-                        }
+                        });
+                    } else {
+                        // Failed to send offer, put engine back immediately
+                        self.roundhouse.house(engine);
                     }
                 }
-
-
-        // // Copilot, let's take the neighbors vec and shuffle it into an array
-        // let randomized_neighbors: Vec<u32> = self.neighbors.keys().copied().collect();
-        // let mut rng = rand::thread_rng();
-        // let mut shuffled_neighbors = randomized_neighbors.clone();
-        // shuffled_neighbors.shuffle(&mut rng);
-
-
+            }
+        }
 
 
 
@@ -1558,12 +1479,19 @@ impl StationState {
                     telemetry.record(TelemetryEvent::TrainDispatchFailed { reason: format!("{:?}", e) });
                     if let Some(request_id) = train.request_id {
                         if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
-                            let _ = reply_to.send(StationCommand::EngineTransferFailed {
-                                request_id,
-                                mission_id: train.mission_id,
-                                responder_id: station_id_clone,
-                                reason: format!("Failed to dispatch train {}: {:?}", train_id, e),
-                            });
+                            if let Some(responder_id) = train.responder_id {
+                                let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                                    request_id,
+                                    mission_id: train.mission_id,
+                                    responder_id: responder_id,
+                                    reason: format!("Failed to dispatch train {}: {:?}", train_id, e),
+                                });
+                            } else {
+                                error!(
+                                    "[{}::Station {}] Train {} has request_id {} but no responder_id; cannot send EngineTransferFailed",
+                                    station_name_clone, station_id_clone, train_id, request_id
+                                );
+                            }
                         }
                     }
                     if let Some(mission_id) = train.mission_id {
@@ -1641,15 +1569,22 @@ impl StationState {
                         train_id, request_id
                     );
                     if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
-                        let _ = reply_to.send(StationCommand::EngineTransferFailed {
-                            request_id,
-                            mission_id: train.mission_id,
-                            responder_id: station_id_clone,
-                            reason: format!(
-                                "Emergency engine transfer train {} derailed",
-                                train_id
-                            ),
-                        });
+                        if let Some(responder_id) = train.responder_id {
+                            let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                                request_id,
+                                mission_id: train.mission_id,
+                                responder_id,
+                                reason: format!(
+                                    "Emergency engine transfer train {} derailed",
+                                    train_id
+                                ),
+                            });
+                        } else {
+                            error!(
+                                "[{}::Station {}] Derailed transfer train {} has request_id {} but no responder_id; cannot send EngineTransferFailed",
+                                station_name_clone, station_id_clone, train_id, request_id
+                            );
+                        }
                     }
                     return;
                 }
@@ -1711,11 +1646,17 @@ impl StationState {
 
                 return;
             }
+            
             let transfer_failure_target = train.request_id.and_then(|request_id| {
                 train
                     .engine_request_reply_to
                     .as_ref()
-                    .map(|reply_to| (request_id, train.mission_id, reply_to.clone()))
+                    .and_then(|reply_to| {
+                        train.responder_id.map(|responder_id| {
+                            // Yield the final 4-element tuple!
+                            (request_id, train.mission_id, reply_to.clone(), responder_id)
+                        })
+                    })
             });
 
             match next_stop_handle.send(StationCommand::ReceiveTrain {
@@ -1737,15 +1678,22 @@ impl StationState {
                     telemetry.record(TelemetryEvent::TrainForwardFailed { reason: format!("Failed to forward train {} to {}", train_id, next_stop) });
                     if let Some(request_id) = train.request_id {
                         if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
-                            let _ = reply_to.send(StationCommand::EngineTransferFailed {
-                                request_id,
-                                mission_id: train.mission_id,
-                                responder_id: station_id_clone,
-                                reason: format!(
-                                    "Failed to forward train {} to {}: destination station unreachable",
-                                    train_id, next_stop
-                                ),
-                            });
+                            if let Some(responder_id) = train.responder_id {
+                                let _ = reply_to.send(StationCommand::EngineTransferFailed {
+                                    request_id,
+                                    mission_id: train.mission_id,
+                                    responder_id,
+                                    reason: format!(
+                                        "Failed to forward train {} to {}: destination station unreachable",
+                                        train_id, next_stop
+                                    ),
+                                });
+                            } else {
+                                error!(
+                                    "[{}::Station {}] Train {} has request_id {} but no responder_id; cannot send EngineTransferFailed on forward failure",
+                                    station_name_clone, station_id_clone, train_id, request_id
+                                );
+                            }
                         }
                     }
                     if let Some(mission_id) = train.mission_id {
@@ -1820,44 +1768,6 @@ impl StationState {
                 }
             }
 
-            // if next_stop_handle
-            //     .send(StationCommand::ReceiveTrain {
-            //         train,
-            //         reply_to: transit_tx,
-            //     })
-            //     .is_err()
-            // {
-            //     error!(
-            //         "[{}::Station {}] Failed to forward train {} to {}",
-            //         station_name_clone, station_id_clone, train_id, next_stop
-            //     );
-            //     telemetry.record(TelemetryEvent::TrainForwardFailed { reason: format!("Failed to forward train {} to {}", train_id, next_stop) });
-            //     if let Some(request_id) = train.request_id {
-            //         if let Some(reply_to) = train.engine_request_reply_to.as_ref() {
-            //             let _ = reply_to.send(StationCommand::EngineTransferFailed {
-            //                 request_id,
-            //                 mission_id: train.mission_id,
-            //                 responder_id: station_id_clone,
-            //                 reason: format!(
-            //                     "Failed to forward train {} to {}: destination station unreachable",
-            //                     train_id, next_stop
-            //                 ),
-            //             });
-            //         }
-            //     }
-            //     if let Some(mission_id) = train.mission_id {
-            //         if !train.cars.is_empty() {
-            //             let _ = station_tx_clone.send(StationCommand::HandleEmergencySOS {
-            //                 mission_id,
-            //                 destination: train.destination,
-            //                 surviving_cars: train.cars,
-            //                 report_to: train.report_to,
-            //             });
-            //         }
-            //     }
-            //     return;
-            // }
-
             let transit_ack_timeout = Duration::from_millis(STATION_HEARTBEAT_MS.saturating_mul(5));
             match tokio::time::timeout(transit_ack_timeout, transit_rx).await {
                 Ok(Ok(Ok(()))) => {}
@@ -1874,12 +1784,12 @@ impl StationState {
                         reason: reason.clone(),
                     });
 
-                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    if let Some((request_id, mission_id, reply_to, responder_id)) = transfer_failure_target.as_ref()
                     {
                         let _ = reply_to.send(StationCommand::EngineTransferFailed {
                             request_id: *request_id,
                             mission_id: *mission_id,
-                            responder_id: station_id_clone,
+                            responder_id: *responder_id,
                             reason,
                         });
                     }
@@ -1897,12 +1807,12 @@ impl StationState {
                         reason: reason.clone(),
                     });
 
-                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    if let Some((request_id, mission_id, reply_to, responder_id)) = transfer_failure_target.as_ref()
                     {
                         let _ = reply_to.send(StationCommand::EngineTransferFailed {
                             request_id: *request_id,
                             mission_id: *mission_id,
-                            responder_id: station_id_clone,
+                            responder_id: *responder_id,
                             reason,
                         });
                     }
@@ -1920,12 +1830,12 @@ impl StationState {
                         reason: reason.clone(),
                     });
 
-                    if let Some((request_id, mission_id, reply_to)) = transfer_failure_target.as_ref()
+                    if let Some((request_id, mission_id, reply_to, responder_id)) = transfer_failure_target.as_ref()
                     {
                         let _ = reply_to.send(StationCommand::EngineTransferFailed {
                             request_id: *request_id,
                             mission_id: *mission_id,
-                            responder_id: station_id_clone,
+                            responder_id: *responder_id,
                             reason,
                         });
                     }

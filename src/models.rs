@@ -324,6 +324,7 @@ pub struct Train{
     //pub distance_km: f64, // We can add more fields here as needed, like destination, mission details, etc.
     pub mission_id: Option<u32>, // This is optional because a train might be in the process of being assembled and not have a mission yet, or it might be between missions.
     pub request_id: Option<u32>, // This is the ID of the engine request that led to this train being assembled. This allows us to correlate the train back to the original request and mission, which is useful for reporting and debugging.
+    pub responder_id: Option<u32>, // This is the ID of the station that provided the engine for this requested emergency engine. If the train derails, we can include this in the failed engine transfer report to the requesting station.
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
     pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
