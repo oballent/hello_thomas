@@ -75,16 +75,9 @@ impl Cargo {
         now_ms >= self.expiry_time_ms
     }
 
-    // We use &mut self because we are going to "reach in and grab" the item
     pub fn check_and_confiscate(&mut self) -> Result<String, TrainError> {
-        
-        // .take() effectively "steals" the contraband out of the cargo
-        // and leaves a None in its place.
         if let Some(seized_item) = self.contraband.take() {
             warn!("SECURITY: Confiscated '{}' from cargo!", seized_item);
-            
-            // We return an Error that OWNS the stolen string.
-            // No references, no lifetimes, no dangling pointers.
             return Err(TrainError::ContrabandOnBoard(seized_item));
         }
 
@@ -152,7 +145,6 @@ impl EngineType {
     }
     
     pub fn max_fuel_capacity(&self) -> f32 {
-        // Let's assume these units are 'Liters' or 'Kilograms of Coal'
         match self {
             EngineType::Percy => 1500.0,
             EngineType::Thomas => 2500.0,
@@ -162,9 +154,6 @@ impl EngineType {
     }
 
     pub fn fuel_efficiency(&self) -> f32 {
-        // Higher is better. 
-        // A Diesel might get 5.0 km/kg of fuel per ton.
-        // A Thomas (Steam) might only get 2.5 km/kg.
         match self {
             EngineType::Diesel => 0.60, // Devious, but extremely efficient
             EngineType::Percy => 0.35, //  Smart and efficient, but not the strongest
@@ -209,7 +198,10 @@ pub enum TrainError {
     },
     MissingCargo {
         cargo_id: Vec<u32>,
-    }
+    },
+    EngineOutOfFuel {
+        engine_id: u32,
+    },
 }
 
 
@@ -232,16 +224,14 @@ impl Engine {
     }
 
     pub fn is_ideal_for_mission(&self, freight_weight: u32) -> bool {
-        let projected_train_weight = freight_weight as f64 + self.engine_type.weight(); // We want to consider the weight of the engine itself in our fuel calculations.
+        let projected_train_weight = freight_weight as f64 + self.engine_type.weight();
         let capacity = self.engine_type.max_capacity();
         let ideal_min = self.engine_type.ideal_min_capacity();
         projected_train_weight > ideal_min && projected_train_weight <= capacity
     }
 
     pub fn can_complete_mission(&self, freight_weight: u32, distance: f64) -> bool {
-
-        let projected_train_weight = freight_weight as f64 + self.engine_type.weight(); // We want to consider the weight of the engine itself in our fuel calculations.
-
+        let projected_train_weight = freight_weight as f64 + self.engine_type.weight();
         let needed = self.calculate_fuel_requirement(projected_train_weight, distance);
 
         let feasible = needed <= self.current_fuel;
@@ -327,7 +317,7 @@ pub struct Train{
     pub responder_id: Option<u32>, // This is the ID of the station that provided the engine for this requested emergency engine. If the train derails, we can include this in the failed engine transfer report to the requesting station.
     // Now, for actor-based, decentralized travel across shortest route to destination
     //pub route_to_destination: Vec<String>, // A list of station names representing the planned route. This is based off the network's pathfinding algorithm. We will use this to know where to send the train next, and to report back to the mission with the path taken.
-    pub destination: u32, // The final destination station name. This is used for reporting back to the mission and for the train's internal logic to know when it has arrived.
+    pub destination: u32,
     pub report_to: Option<OneShotSender<MissionReport>>,
     pub engine_request_reply_to: Option<StationTx>,
 }
@@ -343,16 +333,18 @@ impl Train {
     }
     
 
-    // Notice the &mut self. The train is 'taking damage' (burning fuel).
     pub fn dispatch(&mut self, distance_to_next_stop: f64) -> Result<f64, TrainError> {
         info!("Train {}::Engine {} is departing for ({}km)...", self.id, self.engine.id, distance_to_next_stop);
         
-        // 1. Calculate the final weight
-        let freight_weight = self.calculate_gross_weight(); // Convert to u32 for fuel calculation. In a real system, we would want to be careful about potential overflows here and might want to use a larger integer type or a different approach to weight management.
+        let freight_weight = self.calculate_gross_weight();
         let speed = self.engine.engine_type.speed() as f64;
         
-        // 2. The Consequence
         self.engine.burn_fuel(freight_weight, distance_to_next_stop)?;
+
+        if self.engine.current_fuel < 0.0 {
+            warn!("⚠️ Engine {} will run out of fuel during the journey!", self.engine.id);
+            return Err(TrainError::EngineOutOfFuel { engine_id: self.engine.id });
+        }
         
 
         Ok(distance_to_next_stop / speed) // Return the estimated time to next stop based on speed
@@ -371,12 +363,7 @@ impl Train {
     }
 
     pub fn calculate_gross_weight(&self) -> f64 {
-        // Sum the gross weight of all attached cars
         let consist_weight: u32 = self.cars.iter().map(|car| car.gross_weight()).sum();
-        
-        // If you want the Engine's mass to burn fuel too, you add it here.
-        // let engine_weight = 5000; 
-        
         consist_weight as f64
     }
 
@@ -394,10 +381,9 @@ pub enum MissionReport {
 
 #[derive(Debug)]
 pub enum StationCommand {
-    Beat, // The Heartbeat: a regular tick that triggers the station to check its pending missions and take action. This is important for keeping the station's internal logic moving forward, such as checking for mission timeouts, re-evaluating pending missions, and generally keeping the station "alive" and responsive.
+    Beat,
     ReceiveTrain {
         train: Train,
-        //reply_to: Sender<Result<(), TrainError>>,
         reply_to: OneShotSender<Result<(), TrainError>>,
     },
     HandleEmergencySOS { 
@@ -416,34 +402,25 @@ pub enum StationCommand {
     },
     IntakeEngine {
         engine: Engine,
-        reply_to: Option<OneShotSender<Result<(), TrainError>>>, // This is optional because sometimes we might want to just dump an engine into the station without waiting for a response
+        reply_to: Option<OneShotSender<Result<(), TrainError>>>,
     },
     NewNeighbor {
         neighbor: u32,
-        neighbor_tx: StationTx, //Sender<StationCommand>,
+        neighbor_tx: StationTx,
     },
     EngineRequest { 
         requester_id: u32,
-        forwarder_id: u32, // The station that forwarded this request to us. This allows us to know where the request came from, and to all each station to trace its distance and path backwards.
-        request_id: u32, // unique ID for this specific request
-        mission_id: Option<u32>, // The mission this engine request is for, if applicable. This allows us to track which mission the request belongs to and include that information in our reporting and decision-making. It's optional because we might have some engine requests that are not tied to a specific mission, such as a station requesting an engine for general use or for a future mission that has not been fully defined yet.
-        min_capacity: u32, // The minimum cargo weight that the engine needs to be able to handle. This allows the station to filter out engines that are too weak for the mission right from the start, which saves time and resources by not sending requests to stations that can't possibly fulfill them.
-        max_hop_to_requester: f64, // The longest hop along the route to the requester, which is the distance the engine would have to travel empty to get to the cargo.
-        mission_max_hop: f64, // NEW: The widest gap the engine will face BEFORE or AFTER it arrives to the requesting station. This allows the engine to consider not just whether it can get TO the requesting station, but if it can complete the requesting station's entire mission, which is the real question.
+        forwarder_id: u32,
+        request_id: u32,
+        mission_id: Option<u32>,
+        min_capacity: u32,
+        max_hop_to_requester: f64,
+        mission_max_hop: f64,
         ttl: u32,
-
-        // THE FIX: A fixed-size array and a counter.
-        // This lives entirely on the stack. Zero heap allocation!
-        branch_notified: [u32; 64], // A list of ancestor stations and their neighbors that have already been notified about this request. This prevents us from wasting TTL on sending the same request to the same station multiple times.
+        branch_notified: [u32; 64],
         notified_count: usize,
         reply_to: StationTx,
     },
-    // EngineRequestConfirmed {
-    //     request_id: u32,
-    //     mission_id: Option<u32>,
-    //     responder_id: u32,
-    //     engine_id: u32,
-    // },
     EngineTransferFailed {
         request_id: u32,
         mission_id: Option<u32>,

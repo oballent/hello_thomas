@@ -288,8 +288,6 @@ pub struct TrackConfig {
     let sim_tick_gen = Arc::clone(&sim_tick);
 
     let generator = tokio::spawn(async move {
-        //let mut rng = rand::thread_rng();
-        // Use StdRng which is Send-safe
         use rand::SeedableRng;
         let mut rng = rand::rngs::StdRng::from_entropy();
         let item_types = [
@@ -314,8 +312,6 @@ pub struct TrackConfig {
 
 
             let origin = station_ids_gen[rng.gen_range(0..station_ids_gen.len())];
-            //let mut destination = origin;
-            // Filter out the origin, collect the remaining IDs, and pick one randomly.
             let candidates: Vec<u32> = station_ids_gen.iter().copied().filter(|&id| id != origin).collect();
             let destination = candidates[rng.gen_range(0..candidates.len())];
 
