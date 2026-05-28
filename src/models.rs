@@ -43,16 +43,6 @@ pub fn decay_progress_ratio_ppm(created_time_ms: u64, expiry_time_ms: u64, now_m
 
 
 
-
-
-
-
-
-
-
-
-
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cargo{
     pub id: u32,

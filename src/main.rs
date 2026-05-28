@@ -10,19 +10,12 @@ use rand::Rng;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::mpsc::{self as std_mpsc};
 
 use tokio::sync::mpsc::unbounded_channel;
-//use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedReceiver, UnboundedSender};
-// pub type StationTx = tokio_mpsc::UnboundedSender<StationCommand>;
-// pub type StationRx = tokio_mpsc::UnboundedReceiver<StationCommand>;
 
-use tokio::sync::mpsc::{self as tokio_mpsc, UnboundedSender, UnboundedReceiver,};
-use tokio::sync::oneshot::{self as tokio_oneshot, Sender as OneShotSender, Receiver as OneShotReceiver,};
+use tokio::sync::oneshot::{self as tokio_oneshot};
 
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -208,7 +201,7 @@ pub struct TrackConfig {
             };
             global_engine_id += 1;
 
-            let (reply_tx, mut reply_rx) = tokio_oneshot::channel();
+            let (reply_tx, reply_rx) = tokio_oneshot::channel();
             tx.send(StationCommand::IntakeEngine {
                 engine,
                 reply_to: Some(reply_tx),
@@ -257,7 +250,7 @@ pub struct TrackConfig {
             });
         }
 
-        let (reply_tx, mut reply_rx) = tokio_oneshot::channel();
+        let (reply_tx, reply_rx) = tokio_oneshot::channel();
         tx.send(StationCommand::IntakeCargo {
             cargo: seed_cargo,
             reply_to: reply_tx,

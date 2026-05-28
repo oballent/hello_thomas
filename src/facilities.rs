@@ -1,16 +1,16 @@
 use crate::models::{
-    Cargo, Engine, EngineType, Location, MissionReport, RejectedAsset, StationCommand, Train,
+    Cargo, Engine, EngineType, MissionReport, RejectedAsset, StationCommand, Train,
     TrainCar, TrainError, STATION_HEARTBEAT_MS, StationTx, StationRx,
 };
 use crate::network::{RailwayNetwork, TelemetryClient, TelemetryEvent};
 use rand::Rng;
-use core::error;
+//use core::error;
 //use tokio::sync::mpsc::UnboundedSender;
 use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::thread;
+//use std::thread;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, trace, warn};
 
@@ -203,25 +203,30 @@ impl Railyard {
         }
     }
 
-    pub fn purge_expired_cargo_from_purgatory(&mut self, now_tick: u64) -> Vec<Cargo> {
+    pub fn purge_expired_cargo_from_purgatory(&mut self, now_tick: u64) -> (Vec<Cargo>, Vec<TrainCar>) {
         let mut expired = Vec::new();
+        let mut recovered: Vec<TrainCar> = Vec::new();
         let mut retained = Vec::new();
 
         for mut asset in self.purgatory.drain(..) {
-            if let Some(cargo) = asset.car.cargo.take() {
-                if cargo.expiry_time_ms <= now_tick {
-                    expired.push(cargo);
+            //if let Some(car) = asset.car {
+                if let Some(cargo) = asset.car.cargo.take() {
+                    if cargo.expiry_time_ms <= now_tick {
+                        expired.push(cargo);
+                        recovered.push(asset.car);
+                    } else {
+                        asset.car.cargo = Some(cargo);
+                        retained.push(asset);
+                    }
                 } else {
-                    asset.car.cargo = Some(cargo);
                     retained.push(asset);
                 }
-            } else {
-                retained.push(asset);
-            }
+          //  }
+
         }
 
         self.purgatory = retained;
-        expired
+        (expired, recovered)
     }
 
     pub fn print_report(&self, roundhouse: &Roundhouse) {
@@ -406,21 +411,6 @@ impl Warehouse {
         None
     }
 
-    pub fn get_cargo_by_id(&mut self, id: u32, now_tick: u64) -> Result<Cargo, TrainError> {
-        match self.inventory.remove(&id) {
-            Some(mut cargo) => {
-                cargo.in_transit_since_ms = Some(now_tick);
-                Ok(cargo)
-            }
-            None => Err(TrainError::MissingCargo { cargo_id: vec![id] }),
-        }
-    }
-}
-
-pub struct StationMetadata {
-    pub id: u32,
-    pub name: String,
-    pub location: Location,
 }
 
 pub struct Station;
@@ -669,14 +659,19 @@ impl StationState {
                 .record(TelemetryEvent::CargoExpiredInWarehouse { cargo_ids: dropped_cargo });
         }
 
-        let dropped_from_purgatory = self.yard.purge_expired_cargo_from_purgatory(now_tick);
-        if !dropped_from_purgatory.is_empty() {
-            let cargo_ids: Vec<u32> = dropped_from_purgatory.into_iter().map(|c| c.id).collect();
+        let purged_from_purgatory = self.yard.purge_expired_cargo_from_purgatory(now_tick);
+        let expired_cargo = purged_from_purgatory.0;
+        let recovered_cars = purged_from_purgatory.1;
+        if !expired_cargo.is_empty() {
+            let cargo_ids: Vec<u32> = expired_cargo.into_iter().map(|c| c.id).collect();
             for cargo_id in &cargo_ids {
                 self.pending_engine_requests.remove(cargo_id);
             }
             self.telemetry
                 .record(TelemetryEvent::CargoExpiredInPurgatory { cargo_ids });
+        }
+        if !recovered_cars.is_empty() {
+            self.handle_intake_cars(recovered_cars, None);
         }
 
         self.warehouse.rebuild_pending_work(now_tick);
@@ -802,10 +797,6 @@ impl StationState {
         reason: String,
     ) {
         let Some(request_id) = train.request_id else {
-            error!(
-                "[{}::Station {}] Cannot report engine transfer failure for non-transfer train {}",
-                station_name, station_id, train.id
-            );
             return;
         };
 
@@ -1270,7 +1261,7 @@ impl StationState {
         mission_id: Option<u32>,
         min_capacity: u32,
         mut max_hop_to_requester: f64,
-        mut mission_max_hop: f64,
+        mission_max_hop: f64,
         ttl: u32,
         branch_notified: [u32; 64],
         notified_count: usize,
@@ -1601,9 +1592,28 @@ impl StationState {
         };
 
         let Some(distance_to_next_stop) = self.map.get_distance(self.id, next_stop) else {
-            warn!(
-                "[{}] Missing distance {} -> {}",
-                self.name, self.id, next_stop
+            let reason = format!("Missing distance {} -> {}", self.id, next_stop);
+            warn!("[{}] {}", self.name, reason);
+            telemetry.record(TelemetryEvent::TrainForwardFailed { reason: reason.clone() });
+            if train.request_id.is_some() {
+                Self::notify_engine_transfer_failed(
+                    &self.name,
+                    self.id,
+                    &train,
+                    reason.clone(),
+                );
+            }
+            Self::report_emergency_sos_for_train_failure(
+                &self.name,
+                self.id,
+                &station_tx_clone,
+                &telemetry,
+                train.id,
+                train.mission_id,
+                train.destination,
+                train.cars,
+                train.report_to,
+                "after missing distance",
             );
             return;
         };
