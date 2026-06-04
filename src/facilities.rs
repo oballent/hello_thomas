@@ -457,7 +457,7 @@ impl Station {
                         match maybe_command {
                             Some(command) => {
                                 // The terminate command returns false, executing the shutdown sequence and breaking the loop. All other commands return true to keep the station running.
-                                if !state.handle_command(command) {
+                                if !state.handle_command(command).await {
                                     println!(
                                         "{BOLD}{RED}[{}]::Station {} shutting down.{RESET}",
                                         station_name, station_id
@@ -550,7 +550,7 @@ impl StationState {
         self.sim_tick.load(Ordering::SeqCst)
     }
 
-    fn handle_command(&mut self, command: StationCommand) -> bool {
+    async fn handle_command(&mut self, command: StationCommand) -> bool {
         match command {
             StationCommand::Beat => {
                 self.handle_heartbeat();
@@ -1559,6 +1559,39 @@ impl StationState {
         }
     }
 
+    fn enforce_transit_fallback(
+        station_name: &str,
+        station_id: u32,
+        station_tx: &StationTx,
+        telemetry: &TelemetryClient,
+        train: Train,
+        reason: String,
+        context: &str,
+        event: TelemetryEvent,
+    ) {
+        telemetry.record(event);
+        if train.request_id.is_some() {
+            Self::notify_engine_transfer_failed(
+                station_name,
+                station_id,
+                &train,
+                reason,
+            );
+        }
+        Self::report_emergency_sos_for_train_failure(
+            station_name,
+            station_id,
+            station_tx,
+            telemetry,
+            train.id,
+            train.mission_id,
+            train.destination,
+            train.cars,
+            train.report_to,
+            context,
+        );
+    }
+
     pub fn dispatch_train(&self, mut train: Train, route: Vec<u32>, telemetry: TelemetryClient) {
         let final_destination = train.destination;
         let station_tx_clone = self.tx.clone();
@@ -1567,26 +1600,15 @@ impl StationState {
         let Some(next_stop_handle) = self.neighbors.get(&next_stop).cloned() else {
             let reason = format!("Next stop {} is not a known neighbor", next_stop);
             warn!("[{}] {}", self.name, reason);
-            telemetry.record(TelemetryEvent::TrainForwardFailed { reason: reason.clone() });
-            if train.request_id.is_some() {
-                Self::notify_engine_transfer_failed(
-                    &self.name,
-                    self.id,
-                    &train,
-                    reason.clone(),
-                );
-            }
-            Self::report_emergency_sos_for_train_failure(
+            Self::enforce_transit_fallback(
                 &self.name,
                 self.id,
                 &station_tx_clone,
                 &telemetry,
-                train.id,
-                train.mission_id,
-                train.destination,
-                train.cars,
-                train.report_to,
+                train,
+                reason.clone(),
                 "after forward failure",
+                TelemetryEvent::TrainForwardFailed { reason },
             );
             return;
         };
@@ -1594,26 +1616,15 @@ impl StationState {
         let Some(distance_to_next_stop) = self.map.get_distance(self.id, next_stop) else {
             let reason = format!("Missing distance {} -> {}", self.id, next_stop);
             warn!("[{}] {}", self.name, reason);
-            telemetry.record(TelemetryEvent::TrainForwardFailed { reason: reason.clone() });
-            if train.request_id.is_some() {
-                Self::notify_engine_transfer_failed(
-                    &self.name,
-                    self.id,
-                    &train,
-                    reason.clone(),
-                );
-            }
-            Self::report_emergency_sos_for_train_failure(
+            Self::enforce_transit_fallback(
                 &self.name,
                 self.id,
                 &station_tx_clone,
                 &telemetry,
-                train.id,
-                train.mission_id,
-                train.destination,
-                train.cars,
-                train.report_to,
+                train,
+                reason.clone(),
                 "after missing distance",
+                TelemetryEvent::TrainForwardFailed { reason },
             );
             return;
         };
@@ -1627,29 +1638,17 @@ impl StationState {
             let time_to_travel = match train.dispatch(distance_to_next_stop) {
                 Ok(t) => t,
                 Err(e) => {
-                    error!(
-                        "[{}::Station {}] Failed to dispatch train {}: {:?}",
-                        station_name_clone, station_id_clone, train_id, e
-                    );
-                    telemetry.record(TelemetryEvent::TrainDispatchFailed { reason: format!("{:?}", e) });
                     let reason = format!("Failed to dispatch train {}: {:?}", train_id, e);
-                    Self::notify_engine_transfer_failed(
-                        &station_name_clone,
-                        station_id_clone,
-                        &train,
-                        reason,
-                    );
-                    Self::report_emergency_sos_for_train_failure(
+                    error!("[{}::Station {}] {}", station_name_clone, station_id_clone, reason);
+                    Self::enforce_transit_fallback(
                         &station_name_clone,
                         station_id_clone,
                         &station_tx_clone,
                         &telemetry,
-                        train_id,
-                        train.mission_id,
-                        train.destination,
-                        train.cars,
-                        train.report_to,
+                        train,
+                        reason.clone(),
                         "after dispatch failure",
+                        TelemetryEvent::TrainDispatchFailed { reason: format!("{:?}", e) },
                     );
                     return;
                 }
@@ -1669,35 +1668,23 @@ impl StationState {
 
             let derail = rand::thread_rng().gen_bool(0.1);
             if derail {
-                telemetry.record(TelemetryEvent::TrainDerailed);
                 let reason = format!("Train {} derailed en route to {}", train_id, next_stop);
                 if train.request_id.is_some() {
                     error!(
                         "DERAILMENT: transfer train {} on route to {}",
                         train_id, next_stop
                     );
-                    Self::notify_engine_transfer_failed(
-                        &station_name_clone,
-                        station_id_clone,
-                        &train,
-                        reason.clone(),
-                    );
-                    return;
                 }
-
-                Self::report_emergency_sos_for_train_failure(
+                Self::enforce_transit_fallback(
                     &station_name_clone,
                     station_id_clone,
                     &station_tx_clone,
                     &telemetry,
-                    train_id,
-                    train.mission_id,
-                    train.destination,
-                    train.cars,
-                    train.report_to,
+                    train,
+                    reason,
                     "for derailed train",
+                    TelemetryEvent::TrainDerailed,
                 );
-
                 return;
             }
             
@@ -1724,30 +1711,17 @@ impl StationState {
                     );
                 }
                 Err(tokio_mpsc::error::SendError(StationCommand::ReceiveTrain { train, .. })) => {
-                    error!(
-                        "[{}::Station {}] Failed to forward train {} to {}",
-                        station_name_clone, station_id_clone, train_id, next_stop
-                    );
-
                     let reason = format!("Failed to forward train {} to {}", train_id, next_stop);
-                    telemetry.record(TelemetryEvent::TrainForwardFailed { reason: reason.clone() });
-                    Self::notify_engine_transfer_failed(
-                        &station_name_clone,
-                        station_id_clone,
-                        &train,
-                        reason,
-                    );
-                    Self::report_emergency_sos_for_train_failure(
+                    error!("[{}::Station {}] {}", station_name_clone, station_id_clone, reason);
+                    Self::enforce_transit_fallback(
                         &station_name_clone,
                         station_id_clone,
                         &station_tx_clone,
                         &telemetry,
-                        train_id,
-                        train.mission_id,
-                        train.destination,
-                        train.cars,
-                        train.report_to,
+                        train,
+                        reason.clone(),
                         "after forward failure",
+                        TelemetryEvent::TrainForwardFailed { reason },
                     );
                     return;
                 }
